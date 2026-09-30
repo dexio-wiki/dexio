@@ -8,6 +8,7 @@ name: image
 on:
   push:
     branches: [main]
+    tags: ["v*"]              # a release tag vX.Y.Z also publishes X.Y.Z and X.Y
   workflow_dispatch:
 
 permissions:
@@ -15,7 +16,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: image
+  group: image-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -64,6 +65,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/dexio-wiki/dexio
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=Dexio
+            org.opencontainers.image.description=Dexio: one wiki for all your agents. The server.
+            org.opencontainers.image.licenses=AGPL-3.0-only
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -72,10 +88,5 @@ jobs:
           target: runtime
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/dexio-wiki/dexio:latest
-            ghcr.io/dexio-wiki/dexio:${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/dexio-wiki/dexio
-            org.opencontainers.image.description=Dexio: one wiki for all your agents. The server.
-            org.opencontainers.image.licenses=AGPL-3.0-only
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
