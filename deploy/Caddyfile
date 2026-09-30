@@ -1,0 +1,14 @@
+{$DEXIO_DOMAIN} {
+	encode gzip
+	request_body {
+		max_size 32MB
+	}
+	reverse_proxy dexio:8080 {
+		# A release restarts the app container, which takes a second or two.
+		# Hold requests and retry the connection rather than answering 502.
+		# Caddy always retries a connection that failed to open, whatever
+		# the method, so writes are held too.
+		lb_try_duration 30s
+		lb_try_interval 250ms
+	}
+}

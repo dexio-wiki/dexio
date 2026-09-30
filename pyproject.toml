@@ -1,0 +1,42 @@
+[project]
+name = "dexio"
+version = "1.0.0"
+description = "Dexio: one wiki for all your agents. The server."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "AGPL-3.0-only" }
+authors = [{ name = "Forrest Zhang" }]
+keywords = ["mcp", "agent", "knowledge-base", "wiki", "markdown", "graph", "llm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU Affero General Public License v3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Software Development :: Documentation",
+]
+dependencies = []
+
+[project.optional-dependencies]
+server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "mcp>=2.2,<3", "boto3>=1.34",
+          "psycopg[binary]>=3.2", "psycopg-pool>=3.2", "pypdf>=5.0"]
+# pgserver runs a throwaway local Postgres, so the tests need no database installed.
+# pgserver has no Linux ARM wheel: there the tests use DEXIO_TEST_PG_URL (a real server).
+dev = ["pytest>=8.0", "httpx>=0.27",
+       "pgserver>=0.1.4; sys_platform == 'darwin' or platform_machine == 'x86_64'"]
+
+[project.scripts]
+dexio = "dexio.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/dexio-wiki/dexio"
+Issues = "https://github.com/dexio-wiki/dexio/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dexio"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

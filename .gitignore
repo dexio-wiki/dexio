@@ -1,0 +1,41 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# runtime state: never commit a populated knowledge base
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# generated output
+*.html
+!src/dexio/static/*.html
+
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# terraform: state holds the generated admin token in plaintext
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
+# agent task worktrees
+.worktrees/
+
+# The folder file store tests write when run from the repo root
+/files/

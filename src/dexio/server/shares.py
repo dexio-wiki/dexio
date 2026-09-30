@@ -1,0 +1,537 @@
+"""Sharing a wiki, a folder or a page, the way Google Docs shares a document
+(Forrest, 2026-09-28: "i want the ability to share entire wikis, folders, and
+articles. it should be like gdocs where you can share by email, or you can make
+it publically viewable").
+
+What a share gives is viewing, in the web app. Editing in Dexio is what members
+and their agents do, so "can edit" on the whole wiki is a member invite (and a
+seat on a paid plan); below the whole wiki there is only viewing.
+
+- A share names a target: the whole wiki (kind "wiki", path ""), a folder and
+  everything under it at any depth, now or later ("folder"), or one page
+  ("page"), which follows the page when it is moved (follow_move).
+- By email: the person gets a message with a link (/s/<code>). Only the account
+  the address belongs to can take the share with it (Forrest, 2026-09-28: "the
+  link should not be claim-able by anyone other than the user it was intended
+  for"): the account signed up with that address, for which the link arriving
+  in its inbox is the proof a password sign-up never gave, or one Google or
+  GitHub verified the address for. Any other account, the sharer's included,
+  is turned away and the link keeps working for the right one. An account
+  signed in with Google or GitHub sees shares to that address without the link.
+- Anyone with the link: the target's own address opens without signing in.
+  Such pages are open to search engines too (Forrest, 2026-09-28: "public wiki
+  should bring in search traffic"): the app gives them titles, descriptions and
+  canonical addresses, lists them in /sitemap.xml, and marks outside links on
+  them ugc nofollow so a spam page gets no link value from our domain. Pages
+  shared only by email stay noindex.
+- Grants add up and the broadest wins, as in Drive: a page inside a public
+  folder is public, whatever its own row says.
+
+A guest sees the shared pages, the links among them and the files they show or
+that sit in a shared folder; links to anything else read as plain text. Page
+history, the changes feed, export and everything under Settings stay with
+members. Members (any role) share; only owners invite editors, as in Settings.
+"""
+from __future__ import annotations
+
+import posixpath
+import re
+import secrets
+import time
+from dataclasses import dataclass, field
+from urllib.parse import unquote
+
+from . import db
+
+KINDS = ("wiki", "folder", "page")
+CODE_PREFIX = "dxs_"
+
+
+class ShareError(ValueError):
+    """A reason a person can act on."""
+
+
+class WrongAccount(ShareError):
+    """A share link opened by an account the address does not belong to."""
+
+    def __init__(self, sent_to: str):
+        self.sent_to = masked(sent_to)
+        super().__init__(f"This link was sent to {self.sent_to}. Sign in with that address"
+                         " to open it.")
+
+
+def masked(email: str) -> str:
+    """An address as shown to someone it may not belong to: enough for its owner
+    to recognise (fo•••@gmail.com), not enough to write to."""
+    local, _, domain = (email or "").partition("@")
+    return f"{local[:2 if len(local) > 4 else 1]}•••@{domain}"
+
+
+@dataclass
+class Access:
+    """What one caller may see of one workspace's wiki. role: owner or member
+    (everything, and they can edit and share), guest (signed in, shared with
+    them), public (anyone with the link), or None (nothing)."""
+    workspace_id: int
+    role: str | None
+    whole: bool = False
+    folders: frozenset = field(default_factory=frozenset)
+    pages: frozenset = field(default_factory=frozenset)
+
+    @property
+    def member(self) -> bool:
+        return self.role in ("owner", "member")
+
+    @property
+    def any(self) -> bool:
+        return self.member or self.whole or bool(self.folders) or bool(self.pages)
+
+    def sees(self, path: str) -> bool:
+        """A page, or a file by its folder (sees_file also counts what pages show)."""
+        if self.member or self.whole:
+            return True
+        return path in self.pages or any(path.startswith(f + "/") for f in self.folders)
+
+
+# ---- targets --------------------------------------------------------------
+def norm_target(conn, ws_id: int, kind: str, path: str) -> tuple[str, str]:
+    """(kind, path) as stored, for something that exists: the wiki, a folder
+    with at least one page under it, or a page."""
+    kind = (kind or "").strip().lower()
+    if kind not in KINDS:
+        raise ShareError("Share the wiki, a folder or a page.")
+    if kind == "wiki":
+        return kind, ""
+    p = str(path or "").strip().replace("\\", "/").strip("/")
+    if p.endswith(".md") and kind == "page":
+        p = p[:-3]
+    if not p or any(part in ("", ".", "..") for part in p.split("/")):
+        raise ShareError(f"No {kind} called {path!r}.")
+    k = db.wiki_key(ws_id)
+    if kind == "page" and not db.note(conn, k, p):
+        raise ShareError(f"There is no page {p}.")
+    if kind == "folder" and not db.page_paths(conn, k, p):
+        raise ShareError(f"There is no folder {p}.")
+    return kind, p
+
+
+def covers(kind: str, path: str, target_kind: str, target_path: str) -> bool:
+    """Whether a share on (kind, path) reaches (target_kind, target_path)."""
+    if kind == "wiki":
+        return True
+    if kind == "page":
+        return target_kind == "page" and target_path == path
+    # a folder reaches itself, its subfolders and every page under it
+    return target_kind != "wiki" and (target_path == path or target_path.startswith(path + "/"))
+
+
+def title_of(conn, ws_id: int, kind: str, path: str) -> str:
+    """What a person calls the target: the workspace's name, the folder's
+    path, the page's title."""
+    if kind == "wiki":
+        return (db.workspace(conn, ws_id) or {}).get("name") or "the wiki"
+    if kind == "folder":
+        return path
+    row = db.note(conn, db.wiki_key(ws_id), path)
+    return (row or {}).get("title") or path
+
+
+# ---- who sees what -----------------------------------------------------------
+def verified_emails(conn, user_id: int | None) -> set[str]:
+    """Addresses a sign-in provider (Google, GitHub) has verified for the account."""
+    if not user_id:
+        return set()
+    return {(r["email"] or "").strip().lower() for r in conn.execute(
+        "SELECT email FROM identities WHERE user_id=?", (user_id,))}
+
+
+def addresses(conn, user_id: int | None) -> set[str]:
+    """The addresses a share link may be claimed with: the account's own
+    sign-in address, and those Google or GitHub verified for it."""
+    if not user_id:
+        return set()
+    row = conn.execute("SELECT email FROM users WHERE id=?", (user_id,)).fetchone()
+    own = {(row["email"] or "").strip().lower()} if row else set()
+    return (own | verified_emails(conn, user_id)) - {""}
+
+
+def _rows_for(conn, ws_id: int, user_id: int | None) -> list:
+    rows = conn.execute("SELECT * FROM shares WHERE workspace_id=?", (ws_id,)).fetchall()
+    mine = verified_emails(conn, user_id)
+    out = []
+    for r in rows:
+        if r["email"] is None and r["user_id"] is None:
+            out.append(r)                              # anyone with the link
+        elif user_id and (r["user_id"] == user_id
+                          or (r["user_id"] is None and r["email"] in mine)):
+            out.append(r)
+    return out
+
+
+def access(conn, ws_id: int, user_id: int | None) -> Access:
+    """What `user_id` (None: not signed in) may see of the workspace's wiki."""
+    if user_id:
+        role = db.role_in(conn, ws_id, user_id)
+        if role:
+            return Access(ws_id, role, whole=True)
+    rows = _rows_for(conn, ws_id, user_id)
+    if not rows:
+        return Access(ws_id, None)
+    personal = any(r["email"] is not None for r in rows)
+    return Access(ws_id, "guest" if personal else "public",
+                  whole=any(r["kind"] == "wiki" for r in rows),
+                  folders=frozenset(r["path"] for r in rows if r["kind"] == "folder"),
+                  pages=frozenset(r["path"] for r in rows if r["kind"] == "page"))
+
+
+def shared_with(conn, user_id: int) -> list[dict]:
+    """Workspaces that share something with this account and that it is not a
+    member of: [{id, handle, name}], for the workspace menu's Shared with you."""
+    mine = verified_emails(conn, user_id)
+    ids: set[int] = set()
+    for r in conn.execute("SELECT workspace_id, email, user_id FROM shares"
+                          " WHERE email IS NOT NULL").fetchall():
+        if r["user_id"] == user_id or (r["user_id"] is None and r["email"] in mine):
+            ids.add(int(r["workspace_id"]))
+    member_of = {w["id"] for w in db.workspaces_for_user(conn, user_id)}
+    out = []
+    for ws in sorted(ids - member_of):
+        w = db.workspace(conn, ws)
+        if w:
+            out.append({"id": ws, "handle": w["handle"], "name": w["name"]})
+    return out
+
+
+SITEMAP_MAX = 50000   # the sitemap protocol's limit for one file
+
+
+def public_pages(conn, limit: int = SITEMAP_MAX) -> list[tuple[str, str, float]]:
+    """Every page anyone may read without signing in, across all workspaces:
+    (workspace handle, page path, last change), for /sitemap.xml. Each workspace
+    with something public also gets its own address, path ""."""
+    out: list[tuple[str, str, float]] = []
+    seen: set[tuple[str, str]] = set()
+    rows = conn.execute("SELECT s.workspace_id, s.kind, s.path, w.handle FROM shares s"
+                        " JOIN workspaces w ON w.id = s.workspace_id"
+                        " WHERE s.email IS NULL AND s.user_id IS NULL"
+                        " ORDER BY s.workspace_id, s.kind, s.path").fetchall()
+    for r in rows:
+        k = db.wiki_key(r["workspace_id"])
+        if r["kind"] == "wiki":
+            found = conn.execute("SELECT path, updated_at FROM pages WHERE project=?"
+                                 " ORDER BY path", (k,)).fetchall()
+        elif r["kind"] == "folder":
+            found = conn.execute("SELECT path, updated_at FROM pages WHERE project=? AND path"
+                                 " LIKE ? ESCAPE '\\' ORDER BY path",
+                                 (k, _like_prefix(r["path"]))).fetchall()
+        else:
+            found = conn.execute("SELECT path, updated_at FROM pages WHERE project=? AND"
+                                 " path=?", (k, r["path"])).fetchall()
+        if not found:
+            continue
+        home = (r["handle"], "")
+        if home not in seen:
+            seen.add(home)
+            out.append((r["handle"], "", max(p["updated_at"] or 0 for p in found)))
+        for p in found:
+            if (r["handle"], p["path"]) not in seen:
+                seen.add((r["handle"], p["path"]))
+                out.append((r["handle"], p["path"], p["updated_at"] or 0))
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+# ---- files a guest may open ------------------------------------------------------
+_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
+_MDLINK = re.compile(r"\]\(([^)\s]+)\)")
+
+
+def _file_targets(text: str) -> list[str]:
+    from ..parse import is_file_link, mask_code
+    body = mask_code(text or "")
+    out = [m.split("|", 1)[0] for m in _WIKILINK.findall(body)]
+    out += [m for m in _MDLINK.findall(body) if "://" not in m and not m.startswith("mailto:")]
+    return [t.split("#", 1)[0].strip() for t in out if is_file_link(t)]
+
+
+def _resolve_file(target: str, source: str, paths: set[str]) -> str | None:
+    """The same order the web view resolves a file link in (graph.js resolveFile):
+    exact path, then relative to the linking page, then a unique file name."""
+    t = target.replace("&amp;", "&")
+    t = t[2:] if t.startswith("./") else t
+    t = unquote(t.lstrip("/"))
+    if t in paths:
+        return t
+    if "/" in source:
+        rel = posixpath.normpath(posixpath.join(posixpath.dirname(source), t))
+        if rel in paths:
+            return rel
+    base = t.rsplit("/", 1)[-1]
+    hits = [p for p in paths if p.rsplit("/", 1)[-1] == base]
+    return hits[0] if len(hits) == 1 else None
+
+
+def visible_files(conn, k: str, acc: Access, all_files: list[dict]) -> list[dict]:
+    """The wiki's files this caller may open: those in a shared folder, and
+    those a page they can see links to or shows."""
+    if acc.member or acc.whole:
+        return all_files
+    paths = {f["path"] for f in all_files}
+    keep = {p for p in paths if acc.sees(p)}
+    if paths - keep:
+        for r in _visible_page_texts(conn, k, acc):
+            for t in _file_targets(r["text"]):
+                hit = _resolve_file(t, r["path"], paths)
+                if hit:
+                    keep.add(hit)
+    return [f for f in all_files if f["path"] in keep]
+
+
+def _visible_page_texts(conn, k: str, acc: Access) -> list:
+    rows = []
+    for f in sorted(acc.folders):
+        rows += conn.execute("SELECT path, text FROM pages WHERE project=? AND path LIKE ?"
+                             " ESCAPE '\\'", (k, _like_prefix(f))).fetchall()
+    for p in sorted(acc.pages):
+        rows += conn.execute("SELECT path, text FROM pages WHERE project=? AND path=?",
+                             (k, p)).fetchall()
+    return rows
+
+
+def _like_prefix(folder: str) -> str:
+    return folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
+
+
+def restrict_graph(data: dict, acc: Access) -> dict:
+    """The graph API's answer cut down to what a guest may see. Counts are
+    recomputed from what is left, so nothing about the rest shows."""
+    if acc.member or acc.whole:
+        return data
+    nodes = [n for n in data["nodes"] if acc.sees(n["id"])]
+    ids = {n["id"] for n in nodes}
+    links = [e for e in data["links"] if e["source"] in ids and e["target"] in ids]
+    degree: dict[str, int] = {}
+    inbound: dict[str, int] = {}
+    for e in links:
+        degree[e["source"]] = degree.get(e["source"], 0) + 1
+        degree[e["target"]] = degree.get(e["target"], 0) + 1
+        inbound[e["target"]] = inbound.get(e["target"], 0) + 1
+    nodes = [{**n, "degree": degree.get(n["id"], 0)} for n in nodes]
+    dangling = [d for d in data["dangling"] if d["source"] in ids]
+    return {**data, "nodes": nodes, "links": links, "dangling": dangling, "stats": {
+        "pages": len(nodes), "links": len(links),
+        "orphans": sum(1 for n in nodes if not n["degree"]),
+        "unreferenced": sum(1 for n in nodes if not inbound.get(n["id"])),
+        "dangling": len(dangling), "words": sum(n["words"] for n in nodes)}}
+
+
+# ---- changing shares -----------------------------------------------------------
+def _hash(code: str) -> str:
+    return db.hash_token(code or "")
+
+
+def share_with(conn, ws_id: int, kind: str, path: str, email: str, by: int) -> dict:
+    """Share with one person by email. Returns {id, code, new}: code is the link's
+    secret to email (None when they already opened an earlier link, which keeps
+    working). Sharing the same thing with the same address again makes a fresh
+    link and retires the old one."""
+    email = (email or "").strip().lower()
+    if "@" not in email or len(email) > 254 or any(c.isspace() for c in email):
+        raise ShareError("Enter an email address.")
+    kind, path = norm_target(conn, ws_id, kind, path)
+    code = CODE_PREFIX + secrets.token_urlsafe(24)
+    with db.LOCK, conn:
+        row = conn.execute("SELECT * FROM shares WHERE workspace_id=? AND kind=? AND path=?"
+                           " AND email=?", (ws_id, kind, path, email)).fetchone()
+        if row and row["user_id"]:
+            return {"id": row["id"], "code": None, "new": False}
+        if row:
+            conn.execute("UPDATE shares SET code_hash=? WHERE id=?", (_hash(code), row["id"]))
+            return {"id": row["id"], "code": code, "new": False}
+        cur = conn.execute("INSERT INTO shares (workspace_id, kind, path, email, code_hash,"
+                           " created_by, created_at) VALUES (?,?,?,?,?,?,?)",
+                           (ws_id, kind, path, email, _hash(code), by, time.time()))
+        return {"id": int(cur.lastrowid), "code": code, "new": True}
+
+
+def set_public(conn, ws_id: int, kind: str, path: str, on: bool, by: int) -> bool:
+    """Open the target to anyone with the link, or close it again. Returns
+    whether it is open now (on its own; a parent can still open it)."""
+    kind, path = norm_target(conn, ws_id, kind, path)
+    with db.LOCK, conn:
+        conn.execute("DELETE FROM shares WHERE workspace_id=? AND kind=? AND path=?"
+                     " AND email IS NULL AND user_id IS NULL", (ws_id, kind, path))
+        if on:
+            conn.execute("INSERT INTO shares (workspace_id, kind, path, created_by, created_at)"
+                         " VALUES (?,?,?,?,?)", (ws_id, kind, path, by, time.time()))
+    return on
+
+
+def remove(conn, ws_id: int, share_id: int) -> bool:
+    with db.LOCK, conn:
+        cur = conn.execute("DELETE FROM shares WHERE id=? AND workspace_id=?"
+                           " AND email IS NOT NULL", (share_id, ws_id))
+    return cur.rowcount > 0
+
+
+def accept(conn, code: str, user_id: int) -> dict:
+    """Open an emailed share link as `user_id`: the share is theirs from now on,
+    if the address it was sent to is theirs. Returns the share. WrongAccount
+    when the address is not theirs, which leaves the link as it was; ShareError
+    when the link is unknown, or another account with the address has it.
+
+    A share some other account took before only the address's owner could
+    (the sharer opening their own email, say) goes to the owner when they open
+    the link."""
+    with db.LOCK, conn:
+        row = conn.execute("SELECT * FROM shares WHERE code_hash=?",
+                           (_hash(code),)).fetchone() if code else None
+        if not row:
+            raise ShareError("This link is not valid any more. It may have been replaced by a"
+                             " newer one, or the share was removed.")
+        if row["user_id"] == user_id:
+            return dict(row)
+        if row["email"] not in addresses(conn, user_id):
+            raise WrongAccount(row["email"])
+        if row["user_id"] and row["email"] in addresses(conn, row["user_id"]):
+            raise ShareError("This link was already used by another account. Ask the person"
+                             " who shared it to share it with the address you use here.")
+        conn.execute("UPDATE shares SET user_id=?, accepted_at=? WHERE id=?",
+                     (user_id, time.time(), row["id"]))
+    return dict(row)
+
+
+def follow_move(conn, ws_id: int, old: str, new: str) -> None:
+    """A moved page keeps the shares on it, as a moved Drive file does."""
+    if not old or not new or old == new:
+        return
+    with db.LOCK, conn:
+        conn.execute("UPDATE shares SET path=? WHERE workspace_id=? AND kind='page' AND path=?",
+                     (new, ws_id, old))
+
+
+# ---- Settings > Sharing -------------------------------------------------------------
+# Forrest, 2026-09-28: "in settings, can we make it easy to see what parts of
+# the wiki have been shared?" The dialog answers that for one target at a time;
+# this answers it for the whole workspace: everything public on the web, and
+# everyone something is shared with, each with what it reaches now.
+_ORDER = {"wiki": 0, "folder": 1, "page": 2}
+
+
+def overview(conn, ws_id: int) -> dict:
+    """Every share in the workspace, as Settings > Sharing lists it:
+    {"public": [...], "people": [...], "public_pages": n, "pages": n}. Each item
+    has its share's id, kind, path and title, `pages` (how many pages it reaches
+    now), `exists` (False for a deleted page or a folder with no pages left:
+    the share stays and applies again if one comes back), when and by whom it
+    was made, and `via`: a broader share that already gives the same access,
+    so taking this one away changes nothing. People also carry email, name
+    (once they opened the link) and pending."""
+    k = db.wiki_key(ws_id)
+    titles = {r["path"]: r["title"] for r in conn.execute(
+        "SELECT path, title FROM pages WHERE project=?", (k,)).fetchall()}
+    ws_name = (db.workspace(conn, ws_id) or {}).get("name") or "the wiki"
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM shares WHERE workspace_id=? ORDER BY created_at, id", (ws_id,)).fetchall()]
+    names = db.people(conn, [r["created_by"] for r in rows] + [r["user_id"] for r in rows])
+
+    def reach(kind: str, path: str) -> list[str]:
+        return [p for p in titles if covers(kind, path, "page", p)]
+
+    def title(kind: str, path: str) -> str:
+        if kind == "wiki":
+            return ws_name
+        return titles.get(path) or path if kind == "page" else path
+
+    def item(r: dict, same: list[dict]) -> dict:
+        n = len(reach(r["kind"], r["path"]))
+        wider = next((o for o in same if o["id"] != r["id"] and _wider(o, r)), None)
+        return {"id": r["id"], "kind": r["kind"], "path": r["path"],
+                "title": title(r["kind"], r["path"]), "pages": n,
+                "exists": r["kind"] == "wiki" or n > 0,
+                "created_at": r["created_at"], "by": names.get(r["created_by"] or 0),
+                "via": None if not wider else {"kind": wider["kind"], "path": wider["path"],
+                                               "title": title(wider["kind"], wider["path"])}}
+
+    order = lambda r: (_ORDER.get(r["kind"], 3), r["path"])  # noqa: E731
+    pub = sorted((r for r in rows if r["email"] is None and r["user_id"] is None), key=order)
+    public = [item(r, pub) for r in pub]
+    people = []
+    for r in sorted((r for r in rows if r["email"] is not None),
+                    key=lambda r: (r["email"], *order(r))):
+        same = [o for o in rows if o["email"] == r["email"]]
+        people.append({**item(r, same), "email": r["email"],
+                       "name": names.get(r["user_id"]) if r["user_id"] else None,
+                       "pending": not r["user_id"], "opened_at": r["accepted_at"]})
+    open_pages = {p for r in pub for p in reach(r["kind"], r["path"])}
+    return {"public": public, "people": people, "public_pages": len(open_pages),
+            "pages": len(titles)}
+
+
+def _wider(a: dict, b: dict) -> bool:
+    """Whether share a reaches everything share b does, and more (or the same
+    target, made earlier)."""
+    if (a["kind"], a["path"]) == (b["kind"], b["path"]):
+        return a["id"] < b["id"]
+    return covers(a["kind"], a["path"], b["kind"], b["path"])
+
+
+def stop(conn, ws_id: int, share_id: int) -> dict | None:
+    """Take one share away, of either kind: a person's, or a public one (which
+    set_public cannot reach once its page is gone). Returns the row, or None."""
+    with db.LOCK, conn:
+        row = conn.execute("SELECT * FROM shares WHERE id=? AND workspace_id=?",
+                           (share_id, ws_id)).fetchone()
+        if not row:
+            return None
+        conn.execute("DELETE FROM shares WHERE id=?", (share_id,))
+    return dict(row)
+
+
+# ---- the share dialog -------------------------------------------------------------
+def dialog(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
+    """Everything the share dialog shows for one target: who can open it and how
+    (members, and pending member invites, for the wiki; people it or a folder
+    above it is shared with), and whether anyone with the link can."""
+    kind, path = norm_target(conn, ws_id, kind, path)
+    ws = db.workspace(conn, ws_id) or {}
+    rows = conn.execute("SELECT * FROM shares WHERE workspace_id=? ORDER BY created_at, id",
+                        (ws_id,)).fetchall()
+    here = [r for r in rows if covers(r["kind"], r["path"], kind, path)]
+    names = db.people(conn, [r["user_id"] for r in here if r["user_id"]])
+    people = []
+    for r in here:
+        if r["email"] is None:
+            continue
+        own = r["kind"] == kind and r["path"] == path
+        people.append({
+            "id": r["id"], "email": r["email"],
+            "name": names.get(r["user_id"]) if r["user_id"] else None,
+            "pending": not r["user_id"], "role": "viewer",
+            "via": None if own else {"kind": r["kind"], "path": r["path"],
+                                     "title": title_of(conn, ws_id, r["kind"], r["path"])}})
+    pub_rows = [r for r in here if r["email"] is None and r["user_id"] is None]
+    own_pub = any(r["kind"] == kind and r["path"] == path for r in pub_rows)
+    via = next((r for r in pub_rows if not (r["kind"] == kind and r["path"] == path)), None)
+    members = [{"id": m["id"], "email": m["email"],
+                "name": " ".join(p for p in (m["first_name"] or "", m["last_name"] or "") if p)
+                or None, "role": m["role"], "you": m["id"] == me}
+               for m in db.members(conn, ws_id)]
+    invites = [{"id": i["id"], "email": i["email"]} for i in db.pending_invites(conn, ws_id)]
+    my_role = db.role_in(conn, ws_id, me)
+    limit = db.member_limit(conn, ws_id)
+    return {
+        "target": {"kind": kind, "path": path, "title": title_of(conn, ws_id, kind, path)},
+        "workspace": {"id": ws.get("handle"), "name": ws.get("name"), "plan": ws.get("plan")},
+        "members": members, "invites": invites, "people": people,
+        "public": {"on": own_pub or via is not None, "own": own_pub,
+                   "via": None if not via else {
+                       "kind": via["kind"], "path": via["path"],
+                       "title": title_of(conn, ws_id, via["kind"], via["path"])}},
+        # Editors are members: only the whole wiki has them, and only owners
+        # add them, within the plan's member limit.
+        "editors": {"allowed": kind == "wiki" and my_role == "owner",
+                    "room": limit is None or len(members) < limit,
+                    "plan": ws.get("plan")},
+    }

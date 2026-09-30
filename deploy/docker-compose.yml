@@ -1,0 +1,62 @@
+services:
+  dexio:
+    # DEXIO_IMAGE names a built image (the ECR image CI pushed); unset, the image is
+    # built from this checkout under the name deploy-dexio, as before.
+    image: ${DEXIO_IMAGE:-deploy-dexio}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      DEXIO_DB: /data/dexio.db
+      # The address people and agents use: OAuth, MCP and email links are built on it.
+      DEXIO_PUBLIC_URL: ${DEXIO_PUBLIC_URL:-https://${DEXIO_DOMAIN}}
+      DEXIO_ADMIN_EMAIL: ${DEXIO_ADMIN_EMAIL:-}
+      DEXIO_ADMIN_PASSWORD: ${DEXIO_ADMIN_PASSWORD:-}
+      DEXIO_VIEW_PASSWORD: ${DEXIO_VIEW_PASSWORD:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PORTAL_CONFIG: ${STRIPE_PORTAL_CONFIG:-}
+      DEXIO_MAIL: ${DEXIO_MAIL:-}
+      # Set, the server uses this Postgres database and DEXIO_DB is ignored.
+      DEXIO_DATABASE_URL: ${DEXIO_DATABASE_URL:-}
+      # Wiki files go to the S3 bucket this SSM parameter names (the hosted
+      # service's setup). Set DEXIO_FILES_SSM= (empty) in .env to keep them in a
+      # folder under /data instead, or DEXIO_FILES_BUCKET to name a bucket directly.
+      DEXIO_FILES_SSM: ${DEXIO_FILES_SSM-/dexio/files-bucket}
+      DEXIO_FILES_BUCKET: ${DEXIO_FILES_BUCKET:-}
+      DEXIO_AWS_REGION: ${DEXIO_AWS_REGION:-us-east-1}
+      # Email (sign-in links, invitations) goes through Amazon SES when DEXIO_MAIL=ses.
+      DEXIO_MAIL_FROM: ${DEXIO_MAIL_FROM:-Dexio <no-reply@dexio.wiki>}
+      DEXIO_MAIL_REPLY_TO: ${DEXIO_MAIL_REPLY_TO:-support@dexio.wiki}
+      DEXIO_CONTACT_TO: ${DEXIO_CONTACT_TO:-support@dexio.wiki}
+      DEXIO_FILES_DIR: /data/files
+      # Sign in with Google and GitHub; each appears once its id and secret are set.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+    volumes:
+      # A bind mount onto the persistent EBS volume, not a docker named volume.
+      # Named volumes live under /var/lib/docker on the root disk, which is
+      # destroyed every time the instance is replaced.
+      - ${DEXIO_DATA_DIR:-./data}/dexio:/data
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - dexio
+    environment:
+      DEXIO_DOMAIN: ${DEXIO_DOMAIN:?set DEXIO_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates persist too. Re-issuing on every instance replacement
+      # burns Let's Encrypt rate limits for no reason.
+      - ${DEXIO_DATA_DIR:-./data}/caddy:/data
+      - ${DEXIO_DATA_DIR:-./data}/caddy-config:/config
