@@ -258,6 +258,8 @@ def storage_limit(conn, workspace_id: int) -> int | None:
         return 0
     if ws["storage_limit"] is not None:
         return int(ws["storage_limit"])
+    if not db.plans_apply():        # no Stripe key: a self-hosted copy has no plan limits
+        return None
     rule = PLAN_STORAGE.get(ws["plan"] or "free", PLAN_STORAGE["free"])
     if rule is None:
         return None

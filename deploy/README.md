@@ -37,7 +37,7 @@ Every setting lives in `deploy/.env`; `.env.example` lists them with notes.
 | `DEXIO_MAIL_FROM`, `DEXIO_MAIL_REPLY_TO`, `DEXIO_CONTACT_TO` | Dexio's addresses | set these to your own when mail is on |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | unset | Sign in with Google; callback `/auth/google/callback` |
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | unset | Sign in with GitHub; callback `/auth/github/callback` |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | unset | paid plans through Stripe |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` | unset | plans sold through Stripe; unset, the server sells no plans and its workspaces have no member or storage limits |
 | `DEXIO_DATA_DIR` | `./data` | where the database, files and certificates live on the host |
 
 Without mail, people sign up and sign in with a password; sign-in links and

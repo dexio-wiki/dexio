@@ -167,7 +167,7 @@ def test_one_time_upload_url_from_upload_file(env):
                               agent="a")["error"]
 
 
-def test_storage_limits_by_plan_and_file_size(env, monkeypatch):
+def test_storage_limits_by_plan_and_file_size(env, monkeypatch, plans):
     conn, ws = env["conn"], env["ws"]
     assert files.storage_limit(conn, ws) == 100 * files.MB           # free: 100 MB pooled
     conn.execute("UPDATE workspaces SET plan='team' WHERE id=?", (ws,))
@@ -218,7 +218,7 @@ def test_pages_and_their_history_count_toward_storage(env):
     assert "in files," in page and "in pages and their history" in page
 
 
-def test_free_workspace_over_its_member_limit_is_read_only(env, monkeypatch):
+def test_free_workspace_over_its_member_limit_is_read_only(env, monkeypatch, plans):
     """A plan that ends without the owner choosing Free (Stripe giving up on a card,
     or a plan changed by hand) can leave several people in a Free workspace. It is
     then read-only for everyone until an owner removes members or picks a plan
@@ -289,7 +289,7 @@ def test_files_have_their_own_delete_and_page_tools_refuse_them(env):
     assert files.get(conn, k, "x.txt")
 
 
-def test_browser_uploads_from_settings(env):
+def test_browser_uploads_from_settings(env, plans):
     c = env["c"]
     r = c.put(f"/api/v1/files?path=raw/a.txt&w={env['ws']}", content=b"hi",
               headers={"Content-Type": "text/plain"})

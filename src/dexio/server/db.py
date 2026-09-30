@@ -570,7 +570,17 @@ def add_member(conn, workspace_id: int, user_id: int, role: str = "member") -> N
                      " created_at) VALUES (?,?,?,?)", (workspace_id, user_id, role, time.time()))
 
 
+def plans_apply() -> bool:
+    """Plans, and the member and storage limits that come with them, exist only
+    where a plan can be bought: a server with a Stripe key. A server without one,
+    a self-hosted copy, has no plan limits at all (Forrest, 2026-09-30), since its
+    people would have no way to choose a plan. billing.enabled() reads the same key."""
+    return bool(os.environ.get("STRIPE_SECRET_KEY"))
+
+
 def member_limit(conn, workspace_id: int) -> int | None:
+    if not plans_apply():
+        return None
     ws = workspace(conn, workspace_id) or {}
     return MEMBER_LIMITS.get(ws.get("plan") or "free", 1)
 

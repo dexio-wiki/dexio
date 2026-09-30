@@ -22,6 +22,21 @@ MODE = os.environ.get("DEXIO_TEST_DB", "postgres").lower()
 _open: list = []
 
 
+@pytest.fixture(autouse=True)
+def _no_stripe_from_the_shell(monkeypatch):
+    """Billing and plan limits follow STRIPE_SECRET_KEY (db.plans_apply), so every
+    test starts without it, whatever the shell exports. A test that needs plans
+    asks for the `plans` fixture, or sets a key itself as test_billing does."""
+    for name in ("STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_PORTAL_CONFIG"):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def plans(monkeypatch):
+    """A server that sells plans, so the Free plan's member and storage limits apply."""
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_fake")
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "sqlite_only: checks a SQLite-specific upgrade path")
 

@@ -1390,6 +1390,12 @@ def _plan(ws: dict, owner: bool, b: dict, owners: list[str], email: str = "") ->
     `b` is billing_view: enabled, for_sale, customer, subscription, status,
     seats, period_end, ends_at. `email` is the signed-in person's, for the
     contact form (replies go there)."""
+    if not b.get("enabled"):
+        # No Stripe key: a self-hosted copy. There are no plans to show or limits to
+        # meet (db.plans_apply), so the section says that and nothing else.
+        return ('<div class="panel"><div class="phead"><h2>Plan</h2></div>'
+                '<p class="muted">This server does not sell plans, so its workspaces have no'
+                ' member or storage limits.</p></div>')
     plan = ws.get("plan") or "free"
     name = plan.title()
     seats = max(1, int(b.get("seats") or 1))

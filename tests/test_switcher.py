@@ -17,6 +17,12 @@ def header(html: str) -> str:
     return html.split("<header>")[1].split("</header>")[0]
 
 
+def test_a_server_without_plans_shows_none_beside_the_names():
+    h = header(server_page("/api/v1", workspaces=WS, current=7))
+    assert ">Team</span>" not in h and ">Free</span>" not in h
+    assert '<span class="wsm-label">Northwind</span>' in h
+
+
 def test_the_header_has_the_workspace_menu_and_no_wiki_button():
     h = header(server_page("/api/v1", workspaces=WS, current=7))
     assert "<select" not in h
@@ -30,7 +36,7 @@ def test_the_header_has_the_workspace_menu_and_no_wiki_button():
         assert gone not in h, gone
 
 
-def test_workspace_menu_lists_switches_creates_and_links_settings():
+def test_workspace_menu_lists_switches_creates_and_links_settings(plans):
     h = header(server_page("/api/v1", workspaces=WS, current=7))
     items = re.findall(r'<a class="wsm-item" role="menuitemradio"[^>]*>', h)
     hrefs = [re.search(r'href="([^"]+)"', i).group(1) for i in items]

@@ -206,7 +206,7 @@ def test_accounts_cannot_see_each_others_pages(app):
     assert b.get(f"/api/v1/note?w={ann_ws}&path=secret").status_code == 404
 
 
-def test_invites_join_a_workspace_and_respect_the_plan_limit(app, monkeypatch):
+def test_invites_join_a_workspace_and_respect_the_plan_limit(app, monkeypatch, plans):
     a, b = browser(app), browser(app)
     signup(a, "ann@example.com")
     signup(b, "bob@example.com")
@@ -232,6 +232,36 @@ def test_invites_join_a_workspace_and_respect_the_plan_limit(app, monkeypatch):
     # Members cannot invite; only owners.
     assert b.post(f"/settings/invite?w={ann_ws}", data={"email": "x@example.com"}) \
         .status_code == 403
+
+
+def test_a_server_without_stripe_has_no_plan_limits(app, monkeypatch):
+    """Forrest, 2026-09-30: a self-hosted copy (no Stripe key) has no member or
+    storage limits, since nobody on it can buy a plan."""
+    from dexio.server import files
+    a, b, c = browser(app), browser(app), browser(app)
+    signup(a, "ann@example.com")
+    signup(b, "bob@example.com")
+    signup(c, "cat@example.com")
+    ann_ws = a.get("/api/v1/workspaces").json()["current"]
+    wid = ws_id(app, ann_ws)
+    conn = app.state.conn
+    assert db.member_limit(conn, wid) is None and files.storage_limit(conn, wid) is None
+    # A Free workspace takes a second and a third member, and stays writable.
+    for guest, email in ((b, "bob@example.com"), (c, "cat@example.com")):
+        code = invite_code(a, monkeypatch, email)
+        assert guest.get(f"/invite/{code}").status_code == 303
+    assert len(db.members(conn, wid)) == 3 and db.read_only_reason(conn, wid) == ""
+    # Settings, Plan says there are no plans here, and offers none.
+    page = a.get("/settings/plan").text
+    assert "does not sell plans" in page and "no member or storage limits" in page
+    assert "Upgrade" not in page and "$10" not in page
+    # A limit an operator sets on a workspace still holds.
+    with conn:
+        conn.execute("UPDATE workspaces SET storage_limit=5000 WHERE id=?", (wid,))
+    assert files.storage_limit(conn, wid) == 5000
+    # With a Stripe key the Free plan's limits are back.
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_fake")
+    assert db.member_limit(conn, wid) == 1 and db.read_only_reason(conn, wid)
 
 
 def test_invite_for_someone_without_an_account(app, monkeypatch):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 from pathlib import Path
 from urllib.parse import quote
 
@@ -242,7 +243,10 @@ def workspace_menu(workspaces: list[dict], current: int | None, href, *, menu_id
     ws = next((w for w in workspaces if w["id"] == current), workspaces[0] if workspaces else None)
     if not ws:
         return ""
-    plan = lambda w: str(w.get("plan") or "").title()  # noqa: E731
+    # A server with no Stripe key sells no plans (server.db.plans_apply), so it
+    # shows none beside the names.
+    sells = bool(os.environ.get("STRIPE_SECRET_KEY"))
+    plan = lambda w: str(w.get("plan") or "").title() if sells else ""  # noqa: E731
     rows = "".join(
         f'<a class="wsm-item" role="menuitemradio" tabindex="-1" data-key="ws:{esc(w["handle"])}"'
         f' aria-checked="{"true" if w["id"] == ws["id"] else "false"}" href="{esc(href(w))}">'

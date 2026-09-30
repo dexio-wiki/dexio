@@ -313,7 +313,7 @@ def test_sharing_again_sends_a_fresh_link_and_retires_the_old_one(app, sent):
     assert gus.get(f"/s/{new}").status_code == 303
 
 
-def test_only_members_share_and_only_owners_add_editors(app, sent, monkeypatch):
+def test_only_members_share_and_only_owners_add_editors(app, sent, monkeypatch, plans):
     c, _tok, handle = owner_with_wiki(app)
     # a guest cannot share onward
     share(c, handle, "page", "index", "hal@example.com")
