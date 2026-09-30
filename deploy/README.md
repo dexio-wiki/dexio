@@ -12,6 +12,10 @@ cp .env.example .env      # set DEXIO_DOMAIN at least
 docker compose --env-file .env up -d --build
 ```
 
+To skip the build, use the published image (amd64 and arm64, rebuilt on every
+change to `main`): set `DEXIO_IMAGE=ghcr.io/dexio-wiki/dexio:latest` in `.env` and
+run `docker compose --env-file .env up -d` without `--build`.
+
 DNS must resolve to the host before you bring the stack up. Caddy completes an
 ACME HTTP-01 challenge on first start (ports 80 and 443 open), and without a
 working A record it sits in a retry loop and never serves HTTPS.
