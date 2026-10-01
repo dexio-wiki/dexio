@@ -942,6 +942,15 @@ __THEME_HEAD__
      the pinned column replaces; left on, it reached 24px into the gap and its
      rule, once the page scrolled, crossed the boundary's line (2026-09-27). */
   #panel.toc-pinned .panel-head { margin-left: 0; padding-left: 0; }
+  /* With the head flush to the text, anything hung left of the text, such as
+     a list's "10." whose "1" sits outside the list's padding, showed beside
+     the head as it scrolled under it (Forrest, 2026-10-01: 'The "1" in the
+     "10" peeks to the left of the sticky header when scrolled'). The head's
+     background reaches back to the column boundary, without its rule. */
+  #panel.toc-pinned .panel-head::after {
+    content: ""; position: absolute; top: 0; bottom: 0; right: 100%;
+    width: calc(var(--toc-gap) / 2); background: var(--panel); pointer-events: none;
+  }
   #panel .toc-side { display: none; }
   #panel.toc-pinned .toc-side {
     display: block; position: sticky; top: 0;
