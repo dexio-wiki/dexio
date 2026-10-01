@@ -898,8 +898,15 @@ def server_page(api_base: str, title: str = "Dexio",
                                      bool(ws and ws.get("role") == "owner"))
         else:
             nxt = quote(guest.get("next") or "/", safe="/")
+            # Something here is listed for copying (shares.set_listed): Make a copy
+            # takes the place of Try Dexio free, since it signs people up too.
             menu_html = (f'<a class="hbtn" href="/login?next={esc(nxt)}">Sign in</a>'
-                         f'<a class="hbtn hbtn-primary" href="/signup">Try Dexio free</a>')
+                         + (f'<a class="hbtn hbtn-primary" href="{esc(guest["copy"])}">'
+                            f'Make a copy</a>' if guest.get("copy") else
+                            '<a class="hbtn hbtn-primary" href="/signup">Try Dexio free</a>'))
+        if account and guest.get("copy"):
+            menu_html = (f'<a class="hbtn hbtn-primary" href="{esc(guest["copy"])}">'
+                         f'Make a copy</a>' + menu_html)
     else:
         wsm = workspace_menu(workspaces, ws["id"] if ws else None, lambda w: f"/?w={w['handle']}",
                              menu_id="ws-switch", settings=True, shared=shared)

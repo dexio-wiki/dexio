@@ -159,6 +159,9 @@ MIGRATIONS = [
     # What addresses call the workspace (/w/<handle>, ?w=<handle>): random, so an
     # address does not show how many workspaces came before it (see new_handle).
     ("workspaces", "handle", "TEXT"),
+    # When a public share's owner listed it in the directory on dexio.wiki, where
+    # anyone can find it and make a copy (shares.set_listed); NULL when not listed.
+    ("shares", "listed_at", "REAL"),
 ]
 
 # A page's history keeps a whole copy at least every this many revisions, so

@@ -208,6 +208,13 @@
       `<button type="button" id="sd-public" class="sd-pick sd-access-pick" data-label="General access">` +
       `<span class="sd-pick-now">Restricted</span>${CHEV}</button>` +
       `<p class="sd-gnote"></p></div></div>` +
+      // The directory on dexio.wiki (Forrest, 2026-10-01: "users opt in to publish
+      // their wiki to the dexio website when they share publically"). Only for
+      // something public on its own; off until its owner ticks it.
+      `<label class="sd-list" hidden><input type="checkbox" id="sd-listed">` +
+      `<span class="sd-list-text"><span class="sd-list-name">List on dexio.wiki</span>` +
+      `<span class="sd-list-desc">Anyone can find it in the public wikis on dexio.wiki and ` +
+      `make a copy of it in their own workspace.</span></span></label>` +
       `<div class="sd-foot"><button class="sd-quiet sd-copy" type="button">Copy link</button>` +
       `<button class="sd-primary sd-done" type="button">Done</button></div></div>`;
     document.body.append(dlg);
@@ -230,6 +237,7 @@
     dlg.querySelector(".sd-done").onclick = close;
     dlg.querySelector(".sd-copy").onclick = copy;
     dlg.querySelector(".sd-add").onsubmit = add;
+    dlg.querySelector("#sd-listed").onchange = (e) => setListed(e.target.checked);
     picker(dlg.querySelector("#sd-role"), "end",
            () => ({ viewer: ROLES.viewer, editor: { ...ROLES.editor, off: !!cur && !cur.editors.room } }),
            () => role, (v) => { role = v; showRole(); });
@@ -333,6 +341,8 @@
           ? "the whole wiki" : "the folder " + d.public.via.path} is shared that way. Change it there.`
       : on ? "Anyone can view it without signing in."
            : "Only people with access can open it with the link.";
+    dlg.querySelector(".sd-list").hidden = !(on && d.public.own);
+    dlg.querySelector("#sd-listed").checked = !!d.public.listed;
   }
 
   // Opened for a page or a folder, the wider scopes are a click away: the
@@ -428,12 +438,30 @@
 
   async function setPublic(on) {
     if (!cur || busy) return;
+    const wasListed = !!cur.public.listed;
     busy = true;
     try {
       render(await call("POST", "share/public", null,
                         { kind: cur.target.kind, path: cur.target.path, on }));
       msg(on ? "It is public now: anyone can view it without signing in."
-             : "Only people with access can open it now.");
+             : "Only people with access can open it now." +
+               (wasListed ? " It is no longer listed on dexio.wiki." : ""));
+    } catch (err) {
+      msg(err.message, true);
+      render(cur);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function setListed(on) {
+    if (!cur || busy) return;
+    busy = true;
+    try {
+      render(await call("POST", "share/listed", null,
+                        { kind: cur.target.kind, path: cur.target.path, on }));
+      msg(on ? "Listed on dexio.wiki: anyone can find it there and make a copy."
+             : "Taken off dexio.wiki. It is still public to anyone with the link.");
     } catch (err) {
       msg(err.message, true);
       render(cur);

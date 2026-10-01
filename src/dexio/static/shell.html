@@ -1415,6 +1415,15 @@ __THEME_HEAD__
   .sd-general.open .sd-gicon { background: color-mix(in srgb, var(--accent) 18%, transparent);
                                color: var(--accent); }
   .sd-gnote { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+  /* List on dexio.wiki, under General access, lined up with its text. */
+  .sd-list { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 0 42px;
+             cursor: pointer; }
+  .sd-list[hidden] { display: none; }
+  .sd-list input { flex: none; width: 16px; height: 16px; min-height: 0; margin: 2px 0 0;
+                   accent-color: var(--accent); cursor: pointer; }
+  .sd-list-text { display: flex; flex-direction: column; gap: 2px; }
+  .sd-list-name { font-size: 13.5px; font-weight: 600; }
+  .sd-list-desc { color: var(--muted); font-size: 12.5px; }
   .sd-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 22px; }
   @media (max-width: 480px) {
     .sd-box { padding: 18px 16px 14px; }

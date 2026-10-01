@@ -1031,8 +1031,11 @@ def _sharing(ws: dict, ov: dict, team: bool) -> str:
                                      f" {_via(it['via'])}.")
         else:
             act = menu(it, "Make private", f"Make {name} private? Its address will ask people"
-                                           " to sign in.")
-        return _row([_target(ws, it), _since(it, team), act], hide)
+                                           " to sign in." + (" It also leaves the public wikis"
+                                                             " on dexio.wiki." if it.get("listed")
+                                                             else ""))
+        tag = "Listed on dexio.wiki" if it.get("listed") and not it["via"] else ""
+        return _row([_target(ws, it, tag), _since(it, team), act], hide)
 
     n, total = int(ov.get("public_pages") or 0), int(ov.get("pages") or 0)
     count = (f"All {_pages(total)}" if public and total and n == total
@@ -1812,3 +1815,60 @@ def notice_page(title: str, message: str, link: str = "/", link_text: str = "Con
                                             "" if status_error else message)}
       <a href="{e(link)}">{e(link_text)}</a></div>"""
     return _page(title, body, width=420)
+
+
+# ---- Make a copy (copies.py) --------------------------------------------------
+COPY_NOTE = ("Someone listed this on Dexio for anyone to copy. Sign in, or create a free "
+             "account, and the copy goes into a workspace of yours.")
+COPY_CSS = """<style>
+  .cp-what { margin:0 0 1.1rem; padding:12px 14px; border:1px solid var(--line); border-radius:8px; }
+  .cp-what b { display:block; font-size:16px; }
+  .cp-what span { display:block; margin-top:2px; color:var(--muted); font-size:13.5px; }
+  .cp-about { margin-top:6px !important; color:var(--text) !important; font-size:14px !important; }
+  .wsf-opt.wsf-off { cursor:default; opacity:.55; }
+  .wsf-opt.wsf-off:hover { border-color:var(--line); }
+  .wsf-meta { flex:none; color:var(--muted); font-size:13px; }
+  .wsf-tile.wsf-new { background:var(--sunken); color:var(--muted); font-size:15px;
+    box-shadow:inset 0 0 0 1px var(--line); }
+</style>"""
+
+
+def copy_page(info: dict, email: str, dests: list[dict], from_id: int, *,
+              choose: str = "", error: str = "") -> str:
+    """Where to put a copy: one row per workspace the person is in (radio rows,
+    not a native select, by the standing rule), then a new workspace. Picked
+    first: the one they named, else an empty workspace of theirs, else a new one."""
+    check = ('<svg class="wsf-check" viewBox="0 0 16 16" aria-hidden="true">'
+             '<path d="M3.5 8.4 6.6 11.4 12.5 4.8"></path></svg>')
+    usable = [w for w in dests if not w["blocked"]]
+    if choose == "new" or choose in {w["handle"] for w in usable}:
+        pick = choose
+    else:
+        pick = next((w["handle"] for w in usable if not w["pages"]), "new")
+    rows = ""
+    for w in dests:
+        meta = "Read-only now" if w["blocked"] else (
+            "Empty" if not w["pages"] else f'{w["pages"]:,} page{"s" if w["pages"] != 1 else ""}')
+        off = " disabled" if w["blocked"] else ""
+        rows += (f'<label class="wsf-opt{" wsf-off" if off else ""}"><input type="radio" name="to"'
+                 f' value="{e(w["handle"])}"{" checked" if w["handle"] == pick else ""}{off}>'
+                 f'{ws_tile(w, "wsf-tile")}<span class="wsf-name">{e(w["name"])}</span>'
+                 f'<span class="wsf-meta">{e(meta)}</span>{check}</label>')
+    rows += (f'<label class="wsf-opt"><input type="radio" name="to" value="new"'
+             f'{" checked" if pick == "new" else ""}><span class="wsf-tile wsf-new">+</span>'
+             f'<span class="wsf-name">A new workspace, {e(info["title"])}</span>{check}</label>')
+    n = int(info.get("pages") or 0)
+    size = f'{n:,} page{"s" if n != 1 else ""}' + (
+        f' · from {info["workspace"]}' if info.get("workspace") and info["kind"] != "wiki" else "")
+    about = f'<span class="cp-about">{e(info["description"])}</span>' if info.get("description") else ""
+    body = f"""{WORKSPACE_FIELD_CSS}{COPY_CSS}<form method="post" action="/copy">
+      {_message(error)}
+      <div class="cp-what"><b>{e(info["title"])}</b><span>{e(size)}</span>{about}</div>
+      <input type="hidden" name="from" value="{int(from_id)}">
+      <fieldset class="wsf"><legend>Copy into</legend><div class="wsf-list">{rows}</div></fieldset>
+      <p class="who">Pages keep their paths. A page that is already there is left as it is.
+        Signed in as <b>{e(email)}</b>.</p>
+      <button type="submit">Make a copy</button>
+    </form>"""
+    foot = (f'<a href="{e(info["url"])}">Back to {e(info["title"])}</a>' if info.get("url") else "")
+    return _page("Make a copy", body, foot, width=440)

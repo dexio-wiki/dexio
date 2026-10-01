@@ -357,15 +357,159 @@ def share_with(conn, ws_id: int, kind: str, path: str, email: str, by: int) -> d
 
 def set_public(conn, ws_id: int, kind: str, path: str, on: bool, by: int) -> bool:
     """Open the target to anyone with the link, or close it again. Returns
-    whether it is open now (on its own; a parent can still open it)."""
+    whether it is open now (on its own; a parent can still open it). Closing it
+    also takes it out of the directory; opening what is already open changes
+    nothing, so a listing survives it."""
     kind, path = norm_target(conn, ws_id, kind, path)
     with db.LOCK, conn:
+        have = conn.execute("SELECT id FROM shares WHERE workspace_id=? AND kind=? AND path=?"
+                            " AND email IS NULL AND user_id IS NULL",
+                            (ws_id, kind, path)).fetchall()
+        if on and len(have) == 1:
+            return on
         conn.execute("DELETE FROM shares WHERE workspace_id=? AND kind=? AND path=?"
                      " AND email IS NULL AND user_id IS NULL", (ws_id, kind, path))
         if on:
             conn.execute("INSERT INTO shares (workspace_id, kind, path, created_by, created_at)"
                          " VALUES (?,?,?,?,?)", (ws_id, kind, path, by, time.time()))
     return on
+
+
+# ---- the directory on dexio.wiki --------------------------------------------
+# Forrest, 2026-10-01: "i'd rather have users opt in to publish their wiki to the
+# dexio website when they share publically". Something public can be listed in
+# the directory at dexio.wiki/wikis, where anyone can find it and make a copy of
+# it into a workspace of their own (copies.py). Listing is a second, separate
+# choice in the Share dialog, off until its owner turns it on: making something
+# public lets people with the link read it; listing invites strangers to copy it.
+# Dexio's own templates are listed the same way, from Dexio's own workspaces.
+def _own_public(conn, ws_id: int, kind: str, path: str):
+    return conn.execute("SELECT * FROM shares WHERE workspace_id=? AND kind=? AND path=?"
+                        " AND email IS NULL AND user_id IS NULL ORDER BY id",
+                        (ws_id, kind, path)).fetchone()
+
+
+def set_listed(conn, ws_id: int, kind: str, path: str, on: bool) -> bool:
+    """List a public target in the directory, or take it out. Only something
+    public on its own can be listed (not a page that is public because its
+    folder is: list the folder)."""
+    kind, path = norm_target(conn, ws_id, kind, path)
+    with db.LOCK, conn:
+        row = _own_public(conn, ws_id, kind, path)
+        if not row:
+            if not on:
+                return False
+            raise ShareError("Make it public on the web first. Only something public can be"
+                             " listed.")
+        conn.execute("UPDATE shares SET listed_at=? WHERE id=?",
+                     (time.time() if on else None, row["id"]))
+    return on
+
+
+def listed(conn, share_id) -> dict | None:
+    """A share that is public and listed, by id, or None: what /copy accepts."""
+    try:
+        sid = int(share_id)
+    except (TypeError, ValueError):
+        return None
+    row = conn.execute("SELECT * FROM shares WHERE id=? AND email IS NULL AND user_id IS NULL"
+                       " AND listed_at IS NOT NULL", (sid,)).fetchone()
+    return dict(row) if row else None
+
+
+def listing_for(conn, ws_id: int) -> dict | None:
+    """The widest listed share in a workspace (the wiki before a folder before a
+    page), for the Make a copy button a guest sees, or None."""
+    rows = conn.execute("SELECT * FROM shares WHERE workspace_id=? AND email IS NULL AND"
+                        " user_id IS NULL AND listed_at IS NOT NULL", (ws_id,)).fetchall()
+    rows = sorted((dict(r) for r in rows), key=lambda r: (_ORDER.get(r["kind"], 3),
+                                                          len(r["path"]), r["path"]))
+    return rows[0] if rows else None
+
+
+def reached(conn, ws_id: int, kind: str, path: str) -> list:
+    """The pages a share on (kind, path) reaches now: rows of path, title, text,
+    words and updated_at, in path order."""
+    k = db.wiki_key(ws_id)
+    cols = "SELECT path, title, text, words, updated_at FROM pages WHERE project=?"
+    if kind == "wiki":
+        return conn.execute(cols + " ORDER BY path", (k,)).fetchall()
+    if kind == "folder":
+        return conn.execute(cols + " AND path LIKE ? ESCAPE '\\' ORDER BY path",
+                            (k, _like_prefix(path))).fetchall()
+    return conn.execute(cols + " AND path=?", (k, path)).fetchall()
+
+
+# A listed wiki or folder introduces itself with its front page, if it has one.
+FRONT_PAGES = ("index", "README", "readme", "Readme", "home", "Home", "overview", "Overview")
+
+
+def _scope(kind: str, path: str) -> tuple[str, tuple]:
+    """The WHERE clause after project=? that picks a share's pages, and its values."""
+    if kind == "wiki":
+        return "", ()
+    if kind == "folder":
+        return " AND path LIKE ? ESCAPE '\\'", (_like_prefix(path),)
+    return " AND path=?", (path,)
+
+
+def listing(conn, row: dict) -> dict | None:
+    """What the directory says about one listed share: its title, a line on what
+    it is, its size and its addresses (relative to the app). None when it
+    reaches no pages now (a folder emptied, a page deleted). Counts come from
+    the database; only the front page's text is read."""
+    from ..parse import description_of
+    ws = db.workspace(conn, row["workspace_id"]) or {}
+    k = db.wiki_key(row["workspace_id"])
+    where, args = _scope(row["kind"], row["path"])
+    n = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(words), 0) AS words,"
+                     " COALESCE(MAX(updated_at), 0) AS at FROM pages WHERE project=?" + where,
+                     (k, *args)).fetchone()
+    if not n or not n["n"]:
+        return None
+    if row["kind"] == "page":
+        wanted = [row["path"]]
+    else:
+        prefix = row["path"] + "/" if row["kind"] == "folder" else ""
+        wanted = [prefix + name for name in FRONT_PAGES]
+    found = {r["path"]: r for r in conn.execute(
+        f"SELECT path, title, text FROM pages WHERE project=? AND path IN"
+        f" ({','.join('?' * len(wanted))})", (k, *wanted)).fetchall()}
+    front = next((found[p] for p in wanted if p in found), None)
+    if row["kind"] == "wiki":
+        title = ws.get("name") or "A wiki"
+    elif row["kind"] == "folder":
+        title = (front["title"] if front else "") or row["path"].rsplit("/", 1)[-1]
+    else:
+        title = (front["title"] if front else "") or row["path"]
+    about = description_of(front["text"] or "") if front else ""
+    handle = ws.get("handle") or ""
+    url = f"/w/{handle}" + ("/" + _quote(row["path"]) if row["kind"] == "page"
+                            else "?folder=" + _quote(row["path"]) if row["kind"] == "folder"
+                            else "")
+    return {"id": row["id"], "kind": row["kind"], "path": row["path"], "title": title,
+            "description": about, "workspace": ws.get("name") or "", "handle": handle,
+            "pages": int(n["n"]), "words": int(n["words"] or 0),
+            "updated_at": float(n["at"] or 0), "listed_at": row["listed_at"],
+            "url": url, "copy_url": f"/copy?from={row['id']}"}
+
+
+def directory(conn, limit: int = 500) -> list[dict]:
+    """Everything listed, newest listing first, for the directory on dexio.wiki."""
+    rows = conn.execute("SELECT * FROM shares WHERE email IS NULL AND user_id IS NULL AND"
+                        " listed_at IS NOT NULL ORDER BY listed_at DESC, id DESC"
+                        " LIMIT ?", (int(limit),)).fetchall()
+    out = []
+    for r in rows:
+        item = listing(conn, dict(r))
+        if item:
+            out.append(item)
+    return out
+
+
+def _quote(path: str) -> str:
+    from urllib.parse import quote
+    return quote(path, safe="/")
 
 
 def remove(conn, ws_id: int, share_id: int) -> bool:
@@ -451,6 +595,7 @@ def overview(conn, ws_id: int) -> dict:
                 "title": title(r["kind"], r["path"]), "pages": n,
                 "exists": r["kind"] == "wiki" or n > 0,
                 "created_at": r["created_at"], "by": names.get(r["created_by"] or 0),
+                "listed": bool(r.get("listed_at")),
                 "via": None if not wider else {"kind": wider["kind"], "path": wider["path"],
                                                "title": title(wider["kind"], wider["path"])}}
 
@@ -525,7 +670,10 @@ def dialog(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
         "target": {"kind": kind, "path": path, "title": title_of(conn, ws_id, kind, path)},
         "workspace": {"id": ws.get("handle"), "name": ws.get("name"), "plan": ws.get("plan")},
         "members": members, "invites": invites, "people": people,
+        # listed: in the directory on dexio.wiki; only what is public on its own can be.
         "public": {"on": own_pub or via is not None, "own": own_pub,
+                   "listed": any(r["kind"] == kind and r["path"] == path and r["listed_at"]
+                                 for r in pub_rows),
                    "via": None if not via else {
                        "kind": via["kind"], "path": via["path"],
                        "title": title_of(conn, ws_id, via["kind"], via["path"])}},

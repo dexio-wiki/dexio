@@ -17,8 +17,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from .. import VERSION, ais, themes
 from ..render import server_page
-from . import (auth, billing, db, device, erase, files, mail, membership, oauth, pages,
-               shares, signups, social)
+from . import (auth, billing, copies, db, device, erase, files, mail, membership, oauth,
+               pages, shares, signups, social)
 from . import desktop as desktop_signin
 from . import history as page_history
 from .ratelimit import Limiter, client_ip
@@ -88,6 +88,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
     contact_user = Limiter(5, 3600)    # contact-form messages per person per hour
     device_ip = Limiter(20, 600)       # agent sign-ins started per address per 10 minutes
     device_user = Limiter(30, 600)     # agent codes looked up or answered per user
+    copy_user = Limiter(10, 600)       # copies made per person per 10 minutes
 
     # ---- identity ------------------------------------------------------
     def session_user(request: Request) -> str | None:
@@ -571,6 +572,116 @@ def get_app(db_path: str | None = None) -> FastAPI:
             raise HTTPException(400, str(e)) from None
         return share_dialog(ws, user, kind, path)
 
+    @app.post(f"{API}/share/listed")
+    async def share_listed(request: Request):
+        """List something public in the directory on dexio.wiki, where anyone can
+        find it and make a copy, or take it out (shares.set_listed)."""
+        user, ws = sharer(request)
+        f = await share_body(request)
+        kind, path = str(f.get("kind") or ""), str(f.get("path") or "")
+        on = f.get("on") in (True, "1", "true", "on", 1)
+        try:
+            shares.set_listed(conn, ws["id"], kind, path, on)
+        except shares.ShareError as e:
+            raise HTTPException(400, str(e)) from None
+        return share_dialog(ws, user, kind, path)
+
+    # ---- the directory on dexio.wiki, and making a copy (copies.py) ----------
+    @app.get(f"{API}/directory")
+    def directory():
+        """Everything listed, for dexio.wiki/wikis: read by the site's build and,
+        for what was listed since, by the page itself, so any origin may read it.
+        Only what owners chose to list, all of it already public."""
+        items = shares.directory(conn)
+        for it in items:
+            it["url"] = issuer + it["url"]
+            it["copy_url"] = issuer + it["copy_url"]
+        return JSONResponse({"wikis": items}, headers={
+            "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300"})
+
+    def copy_source(from_id) -> tuple[dict, dict]:
+        share = shares.listed(conn, from_id)
+        info = shares.listing(conn, share) if share else None
+        if not share or not info:
+            raise HTTPException(404, "That is not listed for copying any more. Its owner may"
+                                     " have made it private or taken it out of the directory.")
+        return share, {**info, "url": issuer + info["url"]}
+
+    def copy_gone(e: HTTPException) -> HTMLResponse:
+        return HTMLResponse(pages.notice_page("Make a copy", str(e.detail),
+                                              "https://dexio.wiki/wikis/", "Public wikis"),
+                            status_code=e.status_code)
+
+    @app.get("/copy", response_class=HTMLResponse)
+    def copy_form(request: Request, from_: str = Query(default="", alias="from"),
+                  to: str = Query(default="")):
+        """Where to put a copy of something listed. Signed out: sign in or sign
+        up first, then back here (the new account's own workspace is empty, so
+        it is picked)."""
+        try:
+            share, info = copy_source(from_)
+        except HTTPException as e:
+            return copy_gone(e)
+        user = current_user(request)
+        if not user:
+            here = f"/copy?from={share['id']}"
+            return RedirectResponse(f"/signup?next={quote(here, safe='')}", status_code=303)
+        dests = copies.destinations(conn, user["id"])
+        response = HTMLResponse(pages.copy_page(info, user["email"], dests, share["id"],
+                                                choose=to))
+        response.headers["X-Robots-Tag"] = "noindex"
+        return response
+
+    @app.post("/copy")
+    async def copy_submit(request: Request):
+        if not same_origin(request):
+            raise HTTPException(403, "cross-site request refused")
+        user = require_view(request)
+        f = await form_fields(request)
+        try:
+            share, info = copy_source(f.get("from"))
+        except HTTPException as e:
+            return copy_gone(e)
+        dests = copies.destinations(conn, user["id"])
+        to = (f.get("to") or "").strip()
+
+        def again(error: str, status: int = 400) -> HTMLResponse:
+            return HTMLResponse(pages.copy_page(info, user["email"], dests, share["id"],
+                                                choose=to, error=error), status_code=status)
+
+        if not copy_user.allow(f"copy:{user['id']}"):
+            return again("Too many copies at once. Wait a few minutes and try again.", 429)
+        made_new = None
+        if to == "new":
+            ws_id = db.create_workspace(conn, info["title"], user["id"], plan="free", named=True)
+            made_new = ws_id
+        else:
+            ws = db.find_workspace(dests, to)
+            if not ws:
+                return again("Pick a workspace to copy it into.")
+            ws_id = ws["id"]
+        from starlette.concurrency import run_in_threadpool
+        try:
+            done = await run_in_threadpool(copies.copy, conn, share, ws_id, user=user,
+                                           source_url=info["url"])
+        except copies.CopyError as e:
+            # Refused before anything was written: a workspace made for it goes again.
+            if made_new:
+                with db.LOCK, conn:
+                    erase._drop_workspace(conn, made_new)
+            return again(str(e))
+        except files.FileError as e:
+            return again(f"The pages were copied, but a file could not be: {e}")
+        handle = db.handle_of(conn, ws_id)
+        there = f"/w/{handle}"
+        if share["kind"] == "folder":
+            there += "?folder=" + quote(share["path"], safe="/")
+        elif share["kind"] == "page" and done["pages"]:
+            there += "/" + quote(share["path"], safe="/")
+        response = RedirectResponse(there, status_code=303)
+        _set_ws(response, ws_id)
+        return response
+
     @app.delete(f"{API}/share/{{share_id}}")
     def share_remove(request: Request, share_id: int, kind: str = Query(...),
                      path: str = Query(default="")):
@@ -658,6 +769,8 @@ def get_app(db_path: str | None = None) -> FastAPI:
     def agent_note(next_url: str) -> str:
         if (next_url or "").startswith("/s/"):
             return pages.SHARE_NOTE
+        if (next_url or "").startswith("/copy"):
+            return pages.COPY_NOTE
         return pages.AGENT_NOTE if (next_url or "").startswith("/device") else ""
 
     @app.post("/login/email")
@@ -1807,7 +1920,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
         body = ("User-agent: *\n"
                 "Disallow: /mcp\nDisallow: /s/\nDisallow: /invite/\nDisallow: /oauth/\n"
                 "Disallow: /device\nDisallow: /settings\nDisallow: /billing/\n"
-                "Disallow: /api/v1/share\nDisallow: /api/v1/export\n"
+                "Disallow: /api/v1/share\nDisallow: /api/v1/export\nDisallow: /copy\n"
                 f"Sitemap: {issuer}/sitemap.xml\n")
         return Response(body, media_type="text/plain",
                         headers={"Cache-Control": "public, max-age=3600"})
@@ -1955,6 +2068,9 @@ def get_app(db_path: str | None = None) -> FastAPI:
                        "email": user["email"], "first": first, "last": last}
         guest = {"role": acc.role, "signed_in": bool(user), "home": bool(mine),
                  "name": ws["name"], "handle": ws["handle"], "next": request.url.path}
+        listed = shares.listing_for(conn, ws["id"])
+        if listed:
+            guest["copy"] = f"/copy?from={listed['id']}"
         anyone = shares.access(conn, ws["id"], None)
         row = db.note(conn, db.wiki_key(ws["id"]), page) if page else None
         public = anyone.any and (anyone.sees(page) if row else not page)
