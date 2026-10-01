@@ -648,6 +648,7 @@ DONE = {
     "revoked": "API key revoked.",
     "disconnected": "App disconnected.",
     "name": "Name saved.",
+    "publisher": "Publisher name saved.",
     "password": "Password changed. Any other signed-in browsers have been signed out.",
     "role": "Role changed.",
     "removed": "Removed from the workspace. Their API keys and app sign-ins there stopped working.",
@@ -813,6 +814,23 @@ def _general(ws: dict, owner: bool, billing: dict, leave_blocker: str, delete_bl
         name = (f'<p class="who"><b>{e(ws["name"])}</b></p>'
                 '<p class="muted">Only an owner can rename it.</p>')
     panels = [f'<div class="panel"><h2>Name</h2>{name}</div>']
+
+    # Who this workspace publishes as on dexio.wiki (shares.set_publisher).
+    pub = ws.get("publisher_name") or ""
+    about = ("Everything this workspace publishes shows on dexio.wiki as by this name. No other"
+             " workspace can use it.")
+    if owner:
+        publisher = f"""<form method="post" action="/settings/publisher{_in(ws)}" class="row plain">
+        <div style="flex:1"><label for="publisher">Publisher name</label>
+        <input id="publisher" name="publisher" value="{e(pub)}" minlength="2" maxlength="40"
+          placeholder="Your company or your own name" required></div>
+        <button type="submit">Save</button></form>
+        <p class="muted">{about}</p>"""
+    else:
+        publisher = ((f'<p class="who"><b>{e(pub)}</b></p>' if pub else
+                      '<p class="who">None yet.</p>')
+                     + f'<p class="muted">{about} Only an owner can change it.</p>')
+    panels.append(f'<div class="panel" id="publisher-name"><h2>Publishing</h2>{publisher}</div>')
 
     # The wiki: its size, and a download of every page. It moved here from the
     # Wikis section, which went when a workspace came to have one wiki.

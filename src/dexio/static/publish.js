@@ -3,7 +3,7 @@
 // it into share?", then "yes". Publishing puts a wiki, or the folder in view, among
 // the public wikis on dexio.wiki in one step: public on its own, and listed with the
 // name and description the directory shows, beside a picture of its graph, by the
-// name on the publisher's account.
+// workspace's publisher name.
 // Unpublish takes it off the directory and leaves it public; Share makes it private.
 // Loaded for members only, after share.js, whose dialog styles it borrows.
 (function () {
@@ -53,7 +53,11 @@
       `<div class="pd-fields">` +
       `<label class="sd-lf"><span>Name</span><input id="pd-title-in" type="text" autocomplete="off"></label>` +
       `<label class="sd-lf"><span>Description</span><textarea id="pd-desc" rows="2"></textarea></label>` +
-      // The author is the name on the account (Forrest, 2026-10-01), not typed in.
+      // Who it is by: the workspace's publisher name (Settings, General), unique on
+      // Dexio (Forrest, 2026-10-01). An owner names it here the first time.
+      `<label class="sd-lf pd-pubname" hidden><span>Publisher name</span>` +
+      `<input id="pd-publisher" type="text" autocomplete="organization" maxlength="40" ` +
+      `placeholder="Your company or your own name"></label>` +
       `<p class="pd-by"></p>` +
       `</div>` +
       `<p class="sd-msg" id="pd-msg" role="status" aria-live="polite"></p>` +
@@ -126,17 +130,24 @@
       }
     }
     const by = dlg.querySelector(".pd-by"), l = d.listing || {};
+    const naming = !l.publisher && l.can_name_publisher;
+    dlg.querySelector(".pd-pubname").hidden = !naming;
     by.replaceChildren();
-    const profile = el("a", "", l.me ? "Change it" : "Add your name");
-    profile.href = "/settings/profile";
-    if (l.me) {
-      by.append("By ", el("b", "", l.author || l.me), ", the name on your account" +
-        (d.published && l.author && l.author !== l.me ? "; saving makes it yours. " : ". "), profile);
+    if (l.publisher) {
+      by.append("By ", el("b", "", l.publisher), ", this workspace's publisher name. ");
+      if (l.can_name_publisher) {
+        const a = el("a", "", "Change it in Settings");
+        a.href = `/settings?w=${encodeURIComponent(W)}#publisher-name`;
+        by.append(a);
+      }
+    } else if (naming) {
+      by.append("Everything this workspace publishes shows as by this name. No other " +
+                "workspace can use it, and you can change it in Settings, General.");
     } else {
-      by.append("Your name shows as the author, and your account has none yet. ", profile,
-                " in Settings, Profile, then publish.");
+      by.append("This workspace needs a publisher name before it can publish. Ask an owner " +
+                "to set one in Settings, General.");
     }
-    dlg.querySelector("#pd-go").disabled = !l.me;
+    dlg.querySelector("#pd-go").disabled = !l.publisher && !naming;
     dlg.querySelector("#pd-unpublish").hidden = !d.published;
     dlg.querySelector("#pd-go").textContent = d.published ? "Save" : "Publish";
   }
@@ -181,6 +192,8 @@
       if (on) {
         body.title = dlg.querySelector("#pd-title-in").value;
         body.description = dlg.querySelector("#pd-desc").value;
+        const pub = dlg.querySelector("#pd-publisher");
+        if (!dlg.querySelector(".pd-pubname").hidden) body.publisher = pub.value;
       }
       render(await call("POST", "publish", null, body), !on);
       msg(!on ? "Taken off dexio.wiki. It is still public to anyone with the link; Share can make it private."

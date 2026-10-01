@@ -20,6 +20,16 @@ from test_workspaces import app, browser, mcp, signup, token_from_connect, ws_id
 HTML = {"accept": "text/html"}
 
 
+def owner(app, email="owner@example.com", publisher="Owner Co"):
+    """owner_with_wiki, with the workspace's publisher name set in Settings, General
+    (publishing needs one; Forrest, 2026-10-01)."""
+    c, tok, handle = owner_with_wiki(app, email)
+    if publisher:
+        r = c.post(f"/settings/publisher?w={handle}", data={"publisher": publisher})
+        assert r.status_code == 303, r.text
+    return c, tok, handle
+
+
 def listed(c, handle, kind, path, on=True, status=200):
     r = c.post(f"/api/v1/share/listed?w={handle}", json={"kind": kind, "path": path, "on": on})
     assert r.status_code == status, r.text
@@ -42,7 +52,7 @@ def listed_notes(app, c, handle, tok):
 
 
 def test_only_something_public_on_its_own_can_be_listed(app):
-    c, _tok, handle = owner_with_wiki(app)
+    c, _tok, handle = owner(app)
     d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
     assert d["public"]["listed"] is False
     r = c.post(f"/api/v1/share/listed?w={handle}", json={"kind": "folder", "path": "notes",
@@ -67,7 +77,7 @@ def test_only_something_public_on_its_own_can_be_listed(app):
 
 
 def test_the_directory_lists_what_owners_listed_and_nothing_else(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     assert entries(app) == []
     public(c, handle, "page", "index")                         # public, not listed
     c.post(f"/api/v1/share?w={handle}", json={"kind": "folder", "path": "secret",
@@ -94,7 +104,7 @@ def test_the_directory_lists_what_owners_listed_and_nothing_else(app):
 
 
 def test_a_listed_whole_wiki_is_named_for_its_workspace(app):
-    c, _tok, handle = owner_with_wiki(app)
+    c, _tok, handle = owner(app)
     public(c, handle, "wiki", "")
     listed(c, handle, "wiki", "")
     (e,) = entries(app)
@@ -104,7 +114,7 @@ def test_a_listed_whole_wiki_is_named_for_its_workspace(app):
 
 
 def test_a_guest_sees_make_a_copy_only_where_something_is_listed(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     public(c, handle, "folder", "notes")
     anon = browser(app)
     page = anon.get(f"/w/{handle}/notes/plan", headers=HTML).text
@@ -120,7 +130,7 @@ def test_a_guest_sees_make_a_copy_only_where_something_is_listed(app):
 
 
 def test_signed_out_make_a_copy_signs_up_first_and_comes_back(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     _d, e = listed_notes(app, c, handle, tok)
     anon = browser(app)
     r = anon.get(f"/copy?from={e['id']}")
@@ -141,7 +151,7 @@ def test_signed_out_make_a_copy_signs_up_first_and_comes_back(app):
 
 
 def test_only_listed_things_can_be_copied(app):
-    c, _tok, handle = owner_with_wiki(app)
+    c, _tok, handle = owner(app)
     public(c, handle, "folder", "notes")                # public, not listed
     sid = app.state.conn.execute("SELECT id FROM shares WHERE path='notes'").fetchone()["id"]
     other = browser(app)
@@ -155,7 +165,7 @@ def test_only_listed_things_can_be_copied(app):
 
 
 def test_a_copy_lands_in_your_workspace_with_its_paths_files_and_history(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     _d, e = listed_notes(app, c, handle, tok)
     other = browser(app)
     signup(other, "copier@example.com")
@@ -188,7 +198,7 @@ def test_a_copy_lands_in_your_workspace_with_its_paths_files_and_history(app):
 
 
 def test_a_copy_into_a_new_workspace(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     _d, e = listed_notes(app, c, handle, tok)
     other = browser(app)
     signup(other, "copier@example.com")
@@ -205,7 +215,7 @@ def test_a_copy_into_a_new_workspace(app):
 
 
 def test_a_copy_that_does_not_fit_writes_nothing(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     _d, e = listed_notes(app, c, handle, tok)
     other = browser(app)
     signup(other, "copier@example.com")
@@ -224,7 +234,7 @@ def test_a_copy_that_does_not_fit_writes_nothing(app):
 
 
 def test_a_cross_site_copy_is_refused(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     _d, e = listed_notes(app, c, handle, tok)
     other = browser(app)
     signup(other, "copier@example.com")
@@ -235,7 +245,7 @@ def test_a_cross_site_copy_is_refused(app):
 
 
 def test_settings_sharing_says_what_is_listed(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     listed_notes(app, c, handle, tok)
     page = c.get(f"/settings/sharing?w={handle}").text
     assert "Published on dexio.wiki" in page
@@ -247,7 +257,7 @@ def test_robots_keep_crawlers_off_copy(app):
 
 
 def test_listing_for_prefers_the_widest(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     public(c, handle, "page", "index")
     listed(c, handle, "page", "index")
     public(c, handle, "folder", "notes")
@@ -260,23 +270,23 @@ def test_listing_for_prefers_the_widest(app):
 # publish a wiki, we should allow them to give it a name and description", "show a
 # visual preview of the wiki somehow", "we should also show the author") ----------
 def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     mcp(app, tok, "write_page", path="notes/index", text="# Notes starter\n\nOwn words.\n")
     d = public(c, handle, "folder", "notes")
     form = d["public"]["listing"]
     assert form["title"] == "Notes starter" and form["description"] == "Own words."
-    assert form["author"] == "owner" == form["me"]          # the account's own name
-    assert form["limits"] == {"title": 80, "description": 300}
+    assert form["publisher"] == "Owner Co" and form["can_name_publisher"] is True
+    assert form["limits"] == {"title": 80, "description": 300, "publisher": 40}
     r = c.post(f"/api/v1/share/listed?w={handle}", json={
         "kind": "folder", "path": "notes", "on": True, "title": "  Research   notes ",
         "description": "How we keep\nresearch notes.", "author": "Wrenfield Roasters"})
     assert r.status_code == 200, r.text
     assert r.json()["public"]["listing"]["title"] == "Research notes"
     (e,) = entries(app)
-    # an author sent along is ignored: it is the name on the account (Forrest, 2026-10-01:
-    # "we shouldn't let them freely enter the author name")
+    # an author sent along is ignored: it is the workspace's publisher name (Forrest,
+    # 2026-10-01: not typed in, then a unique workspace setting)
     assert (e["title"], e["description"], e["author"]) == (
-        "Research notes", "How we keep research notes.", "owner")
+        "Research notes", "How we keep research notes.", "Owner Co")
     # saving again changes only what was sent, and keeps the first listing date
     first = e["listed_at"]
     listed(c, handle, "folder", "notes")
@@ -285,21 +295,20 @@ def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
     c.post(f"/api/v1/share/listed?w={handle}", json={"kind": "folder", "path": "notes",
                                                      "on": True, "description": ""})
     (e,) = entries(app)
-    assert e["description"] == "" and e["author"] == "owner"
-    # the author follows the account's name
-    app.state.conn.execute("UPDATE users SET first_name='Ann', last_name='Lee' WHERE"
-                           " email='owner@example.com'")
-    app.state.conn.commit()
+    assert e["description"] == "" and e["author"] == "Owner Co"
+    # renaming the publisher shows on what is published
+    r = c.post(f"/settings/publisher?w={handle}", data={"publisher": "Ann Lee Notes"})
+    assert r.status_code == 303
     (e,) = entries(app)
-    assert e["author"] == "Ann Lee"
+    assert e["author"] == "Ann Lee Notes"
     # the copy page says who it is by
     other = browser(app)
     signup(other, "copier@example.com")
-    assert "by Ann Lee" in other.get(f"/copy?from={e['id']}").text
+    assert "by Ann Lee Notes" in other.get(f"/copy?from={e['id']}").text
 
 
 def test_listing_fields_are_checked(app):
-    c, _tok, handle = owner_with_wiki(app)
+    c, _tok, handle = owner(app)
     public(c, handle, "wiki", "")
     for body, words in (({"title": "   "}, "Give it a name"), ({"title": "x" * 81}, "80"),
                         ({"description": "y" * 301}, "300")):
@@ -310,11 +319,11 @@ def test_listing_fields_are_checked(app):
     # with no author given, it is the lister's name; never their address
     listed(c, handle, "wiki", "")
     (e,) = entries(app)
-    assert e["author"] == "owner" and "@" not in e["author"]
+    assert e["author"] == "Owner Co"
 
 
 def test_a_listing_shows_a_picture_of_its_graph(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     _d, e = listed_notes(app, c, handle, tok)
     assert e["preview_url"].startswith(f"https://app.dexio.wiki/api/v1/directory/{e['id']}/"
                                        "preview.svg?v=")
@@ -344,17 +353,17 @@ def publish(c, handle, kind, path, status=200, **body):
 
 
 def test_publish_makes_it_public_and_lists_it_in_one_step(app):
-    c, tok, handle = owner_with_wiki(app)
+    c, tok, handle = owner(app)
     mcp(app, tok, "write_page", path="notes/index", text="# Notes starter\n\nOwn words.\n")
     s = c.get(f"/api/v1/publish?w={handle}&kind=folder&path=notes").json()
     assert s["published"] is False and s["public"] is False and s["pages"] == 3
-    assert s["listing"]["title"] == "Notes starter" and s["listing"]["author"] == "owner"
+    assert s["listing"]["title"] == "Notes starter" and s["listing"]["publisher"] == "Owner Co"
     assert s["version"].startswith("3.")
     s = publish(c, handle, "folder", "notes", on=True, title="Research notes",
                 description="How we keep notes.", author="Wrenfield")
     assert s["published"] and s["public"] and s["own_public"] and s["share_id"]
     (e,) = entries(app)
-    assert (e["title"], e["author"], e["description"]) == ("Research notes", "owner",
+    assert (e["title"], e["author"], e["description"]) == ("Research notes", "Owner Co",
                                                            "How we keep notes.")
     anon = browser(app)
     assert anon.get(f"/api/v1/note?w={handle}&path=notes/plan").status_code == 200
@@ -369,7 +378,7 @@ def test_publish_makes_it_public_and_lists_it_in_one_step(app):
 
 
 def test_publish_takes_a_wiki_or_a_folder_and_a_bad_name_changes_nothing(app):
-    c, _tok, handle = owner_with_wiki(app)
+    c, _tok, handle = owner(app)
     r = c.get(f"/api/v1/publish?w={handle}&kind=page&path=index")
     assert r.status_code == 400 and "whole wiki or a folder" in r.json()["error"]
     publish(c, handle, "page", "index", status=400, on=True, title="x", author="y")
@@ -385,7 +394,7 @@ def test_publish_takes_a_wiki_or_a_folder_and_a_bad_name_changes_nothing(app):
 
 
 def test_the_publish_picture_is_for_members(app):
-    c, _tok, handle = owner_with_wiki(app)
+    c, _tok, handle = owner(app)
     r = c.get(f"/api/v1/publish/preview.svg?w={handle}&kind=folder&path=notes&v=1")
     assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
     assert r.text.count("<circle") == 2 and "private" in r.headers["cache-control"]
@@ -396,7 +405,7 @@ def test_the_publish_picture_is_for_members(app):
 
 
 def test_the_header_has_publish_for_members_only(app):
-    c, _tok, handle = owner_with_wiki(app)
+    c, _tok, handle = owner(app)
     page = c.get(f"/w/{handle}", headers=HTML).text
     assert 'id="publish-wiki"' in page and "window.dexioPublish = open" in page
     assert page.index('id="publish-wiki"') < page.index('id="share-wiki"')
@@ -405,18 +414,42 @@ def test_the_header_has_publish_for_members_only(app):
     assert 'id="publish-wiki"' not in guest and "window.dexioPublish" not in guest
 
 
-def test_publishing_needs_a_name_on_the_account(app):
-    c, _tok, handle = owner_with_wiki(app)
-    conn = app.state.conn
-    conn.execute("UPDATE users SET first_name='', last_name='' WHERE email='owner@example.com'")
-    conn.commit()
-    s = c.get(f"/api/v1/publish?w={handle}&kind=wiki").json()
-    assert s["listing"]["me"] == "" and s["listing"]["author"] == ""
+def test_publishing_needs_a_unique_publisher_name(app):
+    c, _tok, handle = owner(app, publisher=None)
+    s0 = c.get(f"/api/v1/publish?w={handle}&kind=wiki").json()
+    assert s0["listing"]["publisher"] == "" and s0["listing"]["can_name_publisher"] is True
     err = publish(c, handle, "wiki", "", status=400, on=True, title="All of it")
-    assert "Settings, Profile" in err["error"]
+    assert "publisher name" in err["error"]
     assert c.get(f"/api/v1/share?w={handle}&kind=wiki&path=").json()["public"]["on"] is False
-    assert entries(app) == []
-    conn.execute("UPDATE users SET first_name='Ann' WHERE email='owner@example.com'")
-    conn.commit()
-    publish(c, handle, "wiki", "", on=True, title="All of it")
-    assert [e["author"] for e in entries(app)] == ["Ann"]
+    # the first time, the Publish dialog names it
+    s1 = publish(c, handle, "wiki", "", on=True, title="All of it", publisher="  Ann   Lee Notes ")
+    assert s1["published"] and s1["listing"]["publisher"] == "Ann Lee Notes"
+    assert [e["author"] for e in entries(app)] == ["Ann Lee Notes"]
+    page = c.get(f"/settings?w={handle}").text
+    assert 'id="publisher-name"' in page and 'value="Ann Lee Notes"' in page
+    # no other workspace can have it, in any case or spacing
+    c2, _t2, h2 = owner(app, "second@example.com", publisher=None)
+    r = c2.post(f"/settings/publisher?w={h2}", data={"publisher": "ann lee  NOTES"})
+    assert r.status_code == 400 and "Another workspace publishes as" in r.text
+    err = publish(c2, h2, "wiki", "", status=400, on=True, title="Mine", publisher="ANN LEE NOTES")
+    assert "Another workspace" in err["error"]
+    assert c2.get(f"/api/v1/share?w={h2}&kind=wiki&path=").json()["public"]["on"] is False
+    # names that pass for Dexio are kept for Dexio's own workspaces
+    for name in ("Dexio", "dexio  team", "Support"):
+        r = c2.post(f"/settings/publisher?w={h2}", data={"publisher": name})
+        assert r.status_code == 400 and "kept for Dexio" in r.text, name
+    for name in ("x", "y" * 41, "-dash first", "a<b>"):
+        r = c2.post(f"/settings/publisher?w={h2}", data={"publisher": name})
+        assert r.status_code == 400, name
+    assert c2.post(f"/settings/publisher?w={h2}", data={"publisher": "Second Co"}).status_code == 303
+    # renaming frees the old name
+    c.post(f"/settings/publisher?w={handle}", data={"publisher": "Ann Lee"})
+    assert c2.post(f"/settings/publisher?w={h2}",
+                   data={"publisher": "Ann Lee Notes"}).status_code == 303
+
+
+def test_dexio_may_use_its_own_name(app, monkeypatch):
+    c, _tok, handle = owner(app, publisher=None)
+    monkeypatch.setenv("DEXIO_OFFICIAL_WORKSPACES", handle)
+    assert c.post(f"/settings/publisher?w={handle}", data={"publisher": "Dexio"}).status_code == 303
+    assert shares.publisher_of(app.state.conn, ws_id(app, handle)) == "Dexio"

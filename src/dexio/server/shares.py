@@ -405,20 +405,67 @@ def _field(value, limit: int, what: str, required: bool) -> str | None:
     return text
 
 
-NO_NAME = ("Your name shows as the author, and your account has none yet. Add it in"
-           " Settings, Profile, then publish.")
+# ---- the publisher name --------------------------------------------------------
+# Forrest, 2026-10-01: "Can we actually have a publisher name field in the settings?
+# I'd imagine that it would be a workspace setting", then "It should also be
+# unique". What a workspace publishes shows on dexio.wiki as by its publisher name
+# (it replaced the lister's own name the same day). Owners set it under Settings,
+# General, or in the Publish dialog the first time; no two workspaces can have the
+# same one, compared without case or extra spaces. Names that would pass for Dexio
+# itself are kept for Dexio's own workspaces.
+PUBLISHER_MIN, PUBLISHER_MAX = 2, 40
+_PUBLISHER_OK = re.compile(r"^[\w][\w .&'-]*$")
+RESERVED_PUBLISHERS = {"dexio", "dexio wiki", "dexio.wiki", "dexio team", "dexio official",
+                       "dexio support", "admin", "administrator", "support", "staff",
+                       "moderator", "official"}
+NO_PUBLISHER = ("This workspace needs a publisher name before it can publish. An owner sets"
+                " it in Settings, General.")
 
 
-def person_name(conn, user_id: int | None) -> str:
-    """First and last name as the account has them, or "" (never the address)."""
-    if not user_id:
-        return ""
-    row = conn.execute("SELECT first_name, last_name FROM users WHERE id=?",
-                       (user_id,)).fetchone()
-    if not row:
-        return ""
-    return " ".join(p for p in ((row["first_name"] or "").strip(),
-                                (row["last_name"] or "").strip()) if p)
+def official_workspaces() -> set[str]:
+    """Handles of Dexio's own workspaces, which may use the reserved names:
+    DEXIO_OFFICIAL_WORKSPACES (comma-separated), else Dexio's on app.dexio.wiki."""
+    import os
+    raw = os.environ.get("DEXIO_OFFICIAL_WORKSPACES", "ccmrwyaz")
+    return {h.strip() for h in raw.split(",") if h.strip()}
+
+
+def publisher_key(name: str) -> str:
+    return " ".join(str(name or "").split()).casefold()
+
+
+def publisher_of(conn, ws_id: int) -> str:
+    row = conn.execute("SELECT publisher_name FROM workspaces WHERE id=?", (ws_id,)).fetchone()
+    return (row["publisher_name"] or "") if row else ""
+
+
+def set_publisher(conn, ws_id: int, name) -> str:
+    """Give a workspace its publisher name. ShareError says why one cannot be had:
+    its length or characters, reserved, or another workspace has it."""
+    text = " ".join(str(name or "").split())
+    if len(text) < PUBLISHER_MIN or len(text) > PUBLISHER_MAX:
+        raise ShareError(f"A publisher name is {PUBLISHER_MIN} to {PUBLISHER_MAX} characters.")
+    if not _PUBLISHER_OK.match(text):
+        raise ShareError("A publisher name can have letters, numbers, spaces and . & ' - _,"
+                         " and starts with a letter or number.")
+    key = publisher_key(text)
+    ws = db.workspace(conn, ws_id) or {}
+    if key in RESERVED_PUBLISHERS and ws.get("handle") not in official_workspaces():
+        raise ShareError(f"\u201c{text}\u201d is kept for Dexio itself. Pick another.")
+    with db.LOCK, conn:
+        taken = conn.execute("SELECT id FROM workspaces WHERE publisher_key=? AND id<>?",
+                             (key, ws_id)).fetchone()
+        if taken:
+            raise ShareError(f"Another workspace publishes as \u201c{text}\u201d. Pick another.")
+        try:
+            conn.execute("UPDATE workspaces SET publisher_name=?, publisher_key=? WHERE id=?",
+                         (text, key, ws_id))
+        except Exception as e:                   # the unique index, in a race
+            if "unique" in str(e).lower():
+                raise ShareError(f"Another workspace publishes as \u201c{text}\u201d."
+                                 " Pick another.") from None
+            raise
+    return text
 
 
 def set_listed(conn, ws_id: int, kind: str, path: str, on: bool, *, by: int | None = None,
@@ -427,16 +474,15 @@ def set_listed(conn, ws_id: int, kind: str, path: str, on: bool, *, by: int | No
     public on its own can be listed (not a page that is public because its
     folder is: list the folder). Listing takes the name and description the
     directory shows (Forrest, 2026-10-01); one left out keeps what it was, or
-    falls back to the wiki's own (listing). The author is not written: it is the
-    name on the account of whoever listed it (Forrest, 2026-10-01: "we shouldn't
-    let them freely enter the author name -- it should just be the first name last
-    name"), so `author` is ignored. Listed again later, it keeps its first
-    listing date."""
+    falls back to the wiki's own (listing). Who it is by is never written here:
+    it is the workspace's publisher name (Forrest, 2026-10-01: not freely typed,
+    then a unique workspace setting), so `author` is ignored, and a workspace
+    without one cannot list. Listed again later, it keeps its first listing date."""
     kind, path = norm_target(conn, ws_id, kind, path)
     t = _field(title, TITLE_MAX, "a name", True)
     d = _field(description, DESCRIPTION_MAX, "a description", False)
-    if on and by and not person_name(conn, by):
-        raise ShareError(NO_NAME)
+    if on and not publisher_of(conn, ws_id):
+        raise ShareError(NO_PUBLISHER)
     with db.LOCK, conn:
         row = _own_public(conn, ws_id, kind, path)
         if not row:
@@ -527,12 +573,10 @@ def _own_words(conn, ws: dict, kind: str, path: str) -> tuple[str, str]:
     return title, (description_of(front["text"] or "") if front else "")
 
 
-def author_of(conn, user_id: int | None, ws: dict) -> str:
-    """Who a listing is by: the first and last name on the account that listed it,
-    as the account has them now. A listing from before names were required, or
-    whose lister has since gone, falls back to the workspace's name. Never an
-    email address."""
-    return person_name(conn, user_id) or ws.get("name") or ""
+def author_of(conn, ws: dict) -> str:
+    """Who a listing is by: its workspace's publisher name as it is now; for one
+    listed before publisher names existed, the workspace's name."""
+    return publisher_of(conn, ws["id"]) or ws.get("name") or ""
 
 
 def listing_form(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
@@ -543,16 +587,15 @@ def listing_form(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
     row = _own_public(conn, ws_id, kind, path)
     row = dict(row) if row else {}
     title, about = _own_words(conn, ws, kind, path)
-    listed = bool(row.get("listed_at"))
     return {"title": row.get("listed_title") or title,
             "description": (row.get("listed_description")
                             if row.get("listed_description") is not None else about),
-            # The author is the lister's account name: theirs while it is listed,
-            # else the name of whoever would list it now.
-            "author": author_of(conn, row.get("listed_by") or row.get("created_by"), ws)
-            if listed else person_name(conn, me),
-            "me": person_name(conn, me),
-            "limits": {"title": TITLE_MAX, "description": DESCRIPTION_MAX}}
+            # Who it is by: the workspace's publisher name (set_publisher), which an
+            # owner can give it here if it has none yet.
+            "publisher": publisher_of(conn, ws_id),
+            "can_name_publisher": db.role_in(conn, ws_id, me) == "owner",
+            "limits": {"title": TITLE_MAX, "description": DESCRIPTION_MAX,
+                       "publisher": PUBLISHER_MAX}}
 
 
 def counts(conn, ws_id: int, kind: str, path: str) -> dict:
@@ -593,9 +636,10 @@ def publish_state(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
 
 
 def publish(conn, ws_id: int, kind: str, path: str, on: bool, by: int, *, title=None,
-            description=None, author=None) -> None:
+            description=None, author=None, publisher=None) -> None:
     """Publish a wiki or folder (public on its own, and listed), or unpublish it
-    (off the directory; still public)."""
+    (off the directory; still public). `publisher` names the workspace's publisher
+    the first time, for an owner, when it has none."""
     kind, path = norm_target(conn, ws_id, kind, path)
     if kind not in PUBLISHABLE:
         raise ShareError("Publish the whole wiki or a folder.")
@@ -605,8 +649,12 @@ def publish(conn, ws_id: int, kind: str, path: str, on: bool, by: int, *, title=
     # Check everything before anything changes, so a refusal leaves it as it was.
     _field(title, TITLE_MAX, "a name", True)
     _field(description, DESCRIPTION_MAX, "a description", False)
-    if not person_name(conn, by):
-        raise ShareError(NO_NAME)
+    if not publisher_of(conn, ws_id):
+        if publisher is None or not str(publisher).strip():
+            raise ShareError(NO_PUBLISHER)
+        if db.role_in(conn, ws_id, by) != "owner":
+            raise ShareError("Only an owner can give the workspace its publisher name.")
+        set_publisher(conn, ws_id, publisher)
     set_public(conn, ws_id, kind, path, True, by)
     set_listed(conn, ws_id, kind, path, True, by=by, title=title, description=description)
 
@@ -629,7 +677,7 @@ def listing(conn, row: dict) -> dict | None:
     title = row.get("listed_title") or title
     if row.get("listed_description") is not None:
         about = row["listed_description"]
-    author = author_of(conn, row.get("listed_by") or row.get("created_by"), ws)
+    author = author_of(conn, ws)
     version = f"{int(n['n'])}.{int(n['at'] or 0)}"
     handle = ws.get("handle") or ""
     url = f"/w/{handle}" + ("/" + _quote(row["path"]) if row["kind"] == "page"

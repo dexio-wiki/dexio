@@ -170,6 +170,12 @@ MIGRATIONS = [
     ("shares", "listed_author", "TEXT"),      # unused: the author is the account's name
 
     ("shares", "listed_by", "INTEGER"),
+    # Who a workspace publishes as on dexio.wiki, unique across Dexio (Forrest,
+    # 2026-10-01: "a publisher name field in the settings ... a workspace setting",
+    # "It should also be unique"). publisher_key is the name folded for comparing
+    # (shares.publisher_key); a unique index on it keeps two workspaces apart.
+    ("workspaces", "publisher_name", "TEXT"),
+    ("workspaces", "publisher_key", "TEXT"),
 ]
 
 # A page's history keeps a whole copy at least every this many revisions, so
@@ -230,6 +236,10 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
     _move_into_workspaces(conn)
     one_wiki_each(conn)
     give_handles(conn)
+    with LOCK:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_publisher"
+                     " ON workspaces(publisher_key)")
+        conn.commit()
     compact_history(conn)
     return conn
 
@@ -558,7 +568,8 @@ def workspace_by_handle(conn, handle) -> dict | None:
 
 def workspaces_for_user(conn, user_id: int) -> list[dict]:
     return [dict(r) for r in conn.execute(
-        "SELECT w.id, w.handle, w.name, w.plan, m.role FROM workspaces w JOIN memberships m"
+        "SELECT w.id, w.handle, w.name, w.plan, w.publisher_name, m.role FROM workspaces w"
+        " JOIN memberships m"
         " ON m.workspace_id = w.id WHERE m.user_id=? ORDER BY w.id", (user_id,))]
 
 

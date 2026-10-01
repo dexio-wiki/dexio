@@ -607,7 +607,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
         try:
             # No author: it is the name on the account (shares.author_of).
             shares.publish(conn, ws["id"], kind, path, on, user["id"], title=f.get("title"),
-                           description=f.get("description"))
+                           description=f.get("description"), publisher=f.get("publisher"))
             return shares.publish_state(conn, ws["id"], kind, path, user["id"])
         except shares.ShareError as e:
             raise HTTPException(400, str(e)) from None
@@ -1435,6 +1435,21 @@ def get_app(db_path: str | None = None) -> FastAPI:
             return render_settings(request, user, ws, error=str(e).capitalize() + ".",
                                    status=400)
         return settings_done("general", "renamed", ws)
+
+    @app.post("/settings/publisher", response_class=HTMLResponse)
+    async def settings_publisher(request: Request):
+        """The workspace's publisher name on dexio.wiki (shares.set_publisher)."""
+        user, ws, f, bounce = await settings_post(request)
+        if bounce:
+            return bounce
+        if not ws or ws["role"] != "owner":
+            return render_settings(request, user, ws, error="Only an owner can set the"
+                                   " publisher name.", status=403)
+        try:
+            shares.set_publisher(conn, ws["id"], f.get("publisher", ""))
+        except shares.ShareError as e:
+            return render_settings(request, user, ws, error=str(e), status=400)
+        return settings_done("general", "publisher", ws)
 
     @app.get("/settings/data")
     @app.get("/settings/wikis")
