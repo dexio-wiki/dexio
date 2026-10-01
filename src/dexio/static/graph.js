@@ -3197,12 +3197,18 @@
       const onHead = !!(e.target.closest && e.target.closest(".panel-head"));
       if (!onHead && panel.scrollTop > 0) return;
       const t = e.touches[0];
-      pull = { x: t.clientX, y: t.clientY, drag: null, from: 0, top: 0, dy: 0, v: 0, at: e.timeStamp };
+      pull = { x: t.clientX, y: t.clientY, drag: null, from: 0, top: 0, dy: 0, v: 0, at: e.timeStamp, onHead };
     }, { passive: true });
     panel.addEventListener("touchmove", (e) => {
       if (!pull || e.touches.length !== 1) return;
       const t = e.touches[0], dx = t.clientX - pull.x, dy = t.clientY - pull.y;
       if (pull.drag === null) {
+        // On the head the text never scrolls (its touch-action is none in
+        // the stylesheet). Its first moves are held too, before the gesture
+        // is decided, so the browser cannot begin a scroll in them. On an
+        // iPhone with the page scrolled, the grab handle did nothing: the
+        // pull went to the text as a scroll instead (Forrest, 2026-10-01).
+        if (pull.onHead && e.cancelable) e.preventDefault();
         if (Math.max(Math.abs(dx), Math.abs(dy)) < DECIDE) return;
         // down, more than sideways, and before the browser started a scroll
         if (!(e.cancelable && dy > Math.abs(dx))) { pull = null; return; }

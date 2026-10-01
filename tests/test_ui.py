@@ -364,9 +364,15 @@ def test_phone_sheet_drag_follows_the_finger_and_never_fights_the_scroll():
         "a sheet drag keeps the text still"
     assert "e.cancelable" in sheet, "a scroll the browser has begun stays a scroll"
     assert '.closest(".panel-head")' in sheet, "the head pulls the sheet at any scroll position"
+    # ...on an iPhone too, where a pull on a scrolled page's handle went to the
+    # text (Forrest, 2026-10-01): the browser never scrolls from the head, and
+    # the script holds its first moves
+    assert "pull.onHead && e.cancelable) e.preventDefault()" in sheet
     shell = (STATIC / "shell.html").read_text(encoding="utf-8")
     assert 'matchMedia("(max-width: 720px)")' in sheet and "@media (max-width: 720px)" in shell, \
         "only where the panel is a sheet"
+    head = shell.split("@media (max-width: 720px)")[1].split("#panel .panel-head {", 1)[1].split("}", 1)[0]
+    assert "touch-action: none" in head
 
 
 def test_canvas_opts_out_of_browser_gestures():

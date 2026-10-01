@@ -1541,7 +1541,15 @@ __THEME_HEAD__
       transform: translateY(100%);
     }
     #panel.open { transform: none; }
-    #panel .panel-head { margin: 0 -16px 12px; padding: 22px 10px 10px 16px; }
+    /* The browser never scrolls from the head, so a pull on it is always the
+       sheet's (graph.js, "bottom sheet"). Without it, on an iPhone with the
+       page scrolled, a pull on the grab handle did nothing: the browser
+       took it as a scroll back up the text before the script could claim
+       it. Chrome's touch emulation never showed it (Forrest, 2026-10-01: "The tab pull down doesn't work unless
+       the content is unscrolled"). Taps on its buttons still work, and the
+       contents menu inside it scrolls: a scroller starts its own count. */
+    #panel .panel-head { margin: 0 -16px 12px; padding: 22px 10px 10px 16px;
+                         touch-action: none; }
     /* grab handle, so it reads as a sheet you can dismiss; it rides in the
        sticky head so it stays visible while the page scrolls */
     #panel .panel-head::before {
