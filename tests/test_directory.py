@@ -413,6 +413,9 @@ def test_publishing_is_a_level_of_general_access(app):
     page = c.get(f"/w/{handle}", headers=HTML).text
     assert 'id="publish-wiki"' not in page and "dexioPublish" not in page
     assert "Anyone with the link" in page and "Published on dexio.wiki" in page
+    # people only under Restricted, and Update applies General access (Forrest, 2026-10-01)
+    assert 'class="sd-primary sd-update" type="button">Update</button>' in page
+    assert 'sd-done' not in page and 'class="sd-whosec"' in page and 'class="sd-members"' in page
     d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
     assert d["public"]["publishable"] is True and d["public"]["listed"] is False
     assert c.get(f"/api/v1/share?w={handle}&kind=page&path=notes/plan"
