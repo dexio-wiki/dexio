@@ -454,6 +454,12 @@ def test_publishing_is_a_level_of_visibility(app):
     # Visibility, not General access, and above the people (Forrest, 2026-10-01)
     assert "General access" not in page
     assert page.index('>Visibility</h3>') < page.index('class="sd-whosec"')
+    # the link under Visibility at every level, Copy at its end, Update alone below
+    # (Forrest, 2026-10-01: "B", then "we should show the link regardless of which
+    # visibility is set, right?")
+    assert page.index('>Visibility</h3>') < page.index('class="sd-link"') < page.index('class="sd-whosec"')
+    assert '<div class="sd-foot"><button class="sd-primary sd-update"' in page
+    assert ">Copy link</button>" not in page
     d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
     assert d["public"]["publishable"] is True and d["public"]["listed"] is False
     assert c.get(f"/api/v1/share?w={handle}&kind=page&path=notes/plan"

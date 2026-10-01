@@ -1451,14 +1451,28 @@ __THEME_HEAD__
   .sd-publish .pd-shot { margin: 0 0 10px; }
   .sd-publish .pd-by { margin: 8px 0 0; }
   .sd-whosec[hidden] { display: none; }
+  /* The address under Visibility, Copy at its end; a click on it selects all of it. */
+  .sd-link { display: flex; align-items: stretch; margin: 12px 0 0 42px; border: 1px solid var(--line);
+    border-radius: 6px; background: var(--sunken); overflow: hidden; }
+  .sd-url { flex: 1; min-width: 0; align-self: center; padding: 0 10px; color: var(--muted);
+    font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    user-select: all; -webkit-user-select: all; cursor: text; }
+  .sd-link .sd-copy { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 34px;
+    padding: 0 12px; border: 0; border-left: 1px solid var(--line); background: var(--panel);
+    color: var(--text); font-size: 13px; font-weight: 600; cursor: pointer; }
+  .sd-link .sd-copy:hover { background: var(--btn-fill-hover); }
+  .sd-link .sd-copy:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .sd-link.done .sd-copy { color: var(--accent); }
+  .sd-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6;
+    stroke-linecap: round; stroke-linejoin: round; }
   /* Visibility opens the dialog; the people under Restricted follow, set apart. */
   .sd-h.sd-first { margin-top: 0; }
   .sd-whosec { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
   #sd-g-msg { margin: 8px 0 0 42px; }
-  @media (max-width: 480px) { .sd-publish { margin-left: 0; } }
+  @media (max-width: 480px) { .sd-publish, .sd-link { margin-left: 0; } }
   /* the dialog's buttons set display, which would show one marked hidden */
   .pd-box button[hidden], .pd-box label[hidden], .pd-box p[hidden] { display: none; }
-  .sd-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 22px; }
+  .sd-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
   @media (max-width: 480px) {
     .sd-box { padding: 18px 16px 14px; }
     .sd-row { flex-wrap: wrap; }

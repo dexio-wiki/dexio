@@ -1,11 +1,11 @@
 // ---- sharing (server/shares.py) -------------------------------------------
 // The Share dialog, laid out as Google Docs' is (Forrest, 2026-09-28: "it
 // should be like gdocs where you can share by email, or you can make it
-// publically viewable"): add people by email, the people with access, general
-// access (Restricted or Anyone with the link), Copy link and Done. It opens for
-// whatever the header's Share points at: the page open, else the folder drilled
-// into, else the whole wiki. The dialog offers the wider ones from there.
-// Loaded for members only.
+// publically viewable"). Since 2026-10-01 it reads, top down: Visibility
+// (Restricted, Anyone with the link, Published on dexio.wiki), the link with
+// Copy, the Publish form when Published, people by email when Restricted, and
+// Update. It opens for whatever the header's Share points at: the page open,
+// else the folder drilled into, else the whole wiki. Loaded for members only.
 (function () {
   const API = window.DEXIO_API, W = window.DEXIO_WORKSPACE;
   if (!API || !W) return;
@@ -50,6 +50,9 @@
     'L6 12.5l-3.2.8.8-3.2zM9.5 4l2.5 2.5"></path></svg>';
   const CHEV = '<svg class="sw-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 6.2 8 9.7l3.5-3.5"></path></svg>';
   const CHECK = '<svg class="sw-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.4 6.6 11.4 12.5 4.8"></path></svg>';
+  const COPY = '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.6" y="5.6" width="8.4" height="8.4" rx="1.4"></rect>' +
+    '<path d="M3.6 10.4h-.4A1.2 1.2 0 0 1 2 9.2V3.2C2 2.5 2.5 2 3.2 2h6c.7 0 1.2.5 1.2 1.2v.4"></path></svg>';
+  const DONE = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.4 6.6 11.4 12.5 4.8"></path></svg>';
 
   // What the two pickers offer. Editor's line changes when the plan has no room.
   const ROLES = {
@@ -219,6 +222,12 @@
       `<button type="button" id="sd-public" class="sd-pick sd-access-pick" data-label="Visibility">` +
       `<span class="sd-pick-now">Restricted</span>${CHEV}</button>` +
       `<p class="sd-gnote"></p></div></div>` +
+      // The address itself, with Copy at its end, at every level (Forrest, 2026-10-01:
+      // "B" of three designs for Copy link, then "we should show the link regardless
+      // of which visibility is set, right?"). Under Restricted it opens for people
+      // with access. One click on it selects all of it.
+      `<div class="sd-link"><span class="sd-url" id="sd-url"></span>` +
+      `<button class="sd-copy" type="button" aria-describedby="sd-url">${COPY}<span>Copy</span></button></div>` +
       // Published on dexio.wiki: what it shows there, under Visibility.
       `<div class="sd-publish" hidden>` +
       `<div class="pd-shot"><img alt="" width="640" height="360"><span class="pd-size"></span></div>` +
@@ -246,8 +255,7 @@
       `<h3 class="sd-h">People with access</h3><ul class="sd-people"></ul></div>` +
       // Update's progress and errors, just above it.
       `<p class="sd-msg" id="sd-g-msg" role="status" aria-live="polite"></p>` +
-      `<div class="sd-foot"><button class="sd-quiet sd-copy" type="button">Copy link</button>` +
-      `<button class="sd-primary sd-update" type="button">Update</button></div></div>`;
+      `<div class="sd-foot"><button class="sd-primary sd-update" type="button">Update</button></div></div>`;
     document.body.append(dlg);
     const box = dlg.querySelector(".sd-box");
     dlg.addEventListener("pointerdown", (e) => {
@@ -324,6 +332,9 @@
     const t = d.target;
     dlg.querySelector("#sd-title").textContent = `Share “${t.title}”`;
     dlg.querySelector(".sd-what").textContent = what(t);
+    const url = dlg.querySelector("#sd-url");
+    url.textContent = d.link.replace(/^https?:\/\//, "");
+    url.title = d.link;
     // Editors are members: the whole wiki only, owners only, room on the plan.
     // With no room, Editor is greyed out in the menu and says why there.
     if (!d.editors.allowed || !d.editors.room) role = "viewer";
@@ -507,6 +518,8 @@
     dlg.querySelector("#sd-email").value = "";
     dlg.querySelector("#sd-title").textContent = "Share";
     dlg.querySelector(".sd-what").textContent = "";
+    dlg.querySelector("#sd-url").textContent = "";
+    copied(false);
     dlg.querySelector(".sd-people").replaceChildren(el("li", "sd-loading", "Loading…"));
     dlg.hidden = false;
     document.body.classList.add("sd-open");
@@ -522,7 +535,7 @@
   }
 
   // The email box where people can be added (Restricted), else Visibility, else
-  // Copy link when Visibility is fixed by a wider share.
+  // the link's Copy when Visibility is fixed by a wider share.
   function focusFirst() {
     const email = dlg.querySelector("#sd-email"), pub = dlg.querySelector("#sd-public");
     (!dlg.querySelector(".sd-whosec").hidden ? email
@@ -620,14 +633,20 @@
 
   async function copy() {
     if (!cur) return;
-    const b = dlg.querySelector(".sd-copy");
     try {
       await navigator.clipboard.writeText(cur.link);
-      b.textContent = "Link copied";
+      copied(true);
     } catch (e) {
       window.prompt("Copy this link:", cur.link);
     }
-    setTimeout(() => { b.textContent = "Copy link"; }, 2000);
+    clearTimeout(copy.t);
+    copy.t = setTimeout(() => copied(false), 2000);
+  }
+
+  // Copy, or for two seconds after, Copied with a check.
+  function copied(on) {
+    dlg.querySelector(".sd-copy").innerHTML = on ? `${DONE}<span>Copied</span>` : `${COPY}<span>Copy</span>`;
+    dlg.querySelector(".sd-link").classList.toggle("done", on);
   }
 
   window.dexioShare = open;
