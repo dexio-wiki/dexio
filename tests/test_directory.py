@@ -238,7 +238,7 @@ def test_settings_sharing_says_what_is_listed(app):
     c, tok, handle = owner_with_wiki(app)
     listed_notes(app, c, handle, tok)
     page = c.get(f"/settings/sharing?w={handle}").text
-    assert "Listed on dexio.wiki" in page
+    assert "Published on dexio.wiki" in page
     assert "It also leaves the public wikis on dexio.wiki." in page
 
 

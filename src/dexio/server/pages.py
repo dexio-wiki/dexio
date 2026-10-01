@@ -1034,7 +1034,7 @@ def _sharing(ws: dict, ov: dict, team: bool) -> str:
                                            " to sign in." + (" It also leaves the public wikis"
                                                              " on dexio.wiki." if it.get("listed")
                                                              else ""))
-        tag = "Listed on dexio.wiki" if it.get("listed") and not it["via"] else ""
+        tag = "Published on dexio.wiki" if it.get("listed") and not it["via"] else ""
         return _row([_target(ws, it, tag), _since(it, team), act], hide)
 
     n, total = int(ov.get("public_pages") or 0), int(ov.get("pages") or 0)
