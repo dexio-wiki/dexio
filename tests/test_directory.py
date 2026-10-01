@@ -446,19 +446,25 @@ def test_publishing_is_a_level_of_visibility(app):
     page = c.get(f"/w/{handle}", headers=HTML).text
     assert 'id="publish-wiki"' not in page and "dexioPublish" not in page
     assert "Anyone with the link" in page and "Published on dexio.wiki" in page
-    # people only under Restricted, and Update applies Visibility (Forrest, 2026-10-01)
-    assert 'class="sd-primary sd-update" type="button">Update</button>' in page
+    # people only under Restricted (Forrest, 2026-10-01)
     assert 'sd-done' not in page and 'class="sd-whosec"' in page
+    # Visibility applies as it is picked, Published waits for its own Publish, and
+    # the dialog has a close button (Forrest, 2026-10-01: "the dropdown should
+    # automatically apply the update. Except publication should require a second
+    # button press. This modal is also missing a close button")
+    assert "sd-update" not in page and 'class="sd-foot"' not in page
+    assert '<button class="sd-primary sd-pub" type="button">Publish</button>' in page
+    assert 'class="sd-close" aria-label="Close"' in page
+    assert page.index('class="sd-close"') < page.index('>Visibility</h3>')
     # no "Members of ... can always edit it" line in its place (Forrest, 2026-10-01)
     assert "sd-members" not in page and "can always edit it" not in page
     # Visibility, not General access, and above the people (Forrest, 2026-10-01)
     assert "General access" not in page
     assert page.index('>Visibility</h3>') < page.index('class="sd-whosec"')
-    # the link under Visibility at every level, Copy at its end, Update alone below
-    # (Forrest, 2026-10-01: "B", then "we should show the link regardless of which
+    # the link under Visibility at every level, Copy at its end (Forrest,
+    # 2026-10-01: "B", then "we should show the link regardless of which
     # visibility is set, right?")
     assert page.index('>Visibility</h3>') < page.index('class="sd-link"') < page.index('class="sd-whosec"')
-    assert '<div class="sd-foot"><button class="sd-primary sd-update"' in page
     assert ">Copy link</button>" not in page
     d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
     assert d["public"]["publishable"] is True and d["public"]["listed"] is False

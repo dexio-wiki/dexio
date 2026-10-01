@@ -3,9 +3,13 @@
 // should be like gdocs where you can share by email, or you can make it
 // publically viewable"). Since 2026-10-01 it reads, top down: Visibility
 // (Restricted, Anyone with the link, Published on dexio.wiki), the link with
-// Copy, the Publish form when Published, people by email when Restricted, and
-// Update. It opens for whatever the header's Share points at: the page open,
-// else the folder drilled into, else the whole wiki. Loaded for members only.
+// Copy, the Publish form when Published, and people by email when Restricted,
+// with a close button at the top. Picking a level applies it at once, except
+// Published, which waits for the form's own Publish (Forrest, 2026-10-01: "the
+// dropdown should automatically apply the update. Except publication should
+// require a second button press. This modal is also missing a close button").
+// It opens for whatever the header's Share points at: the page open, else the
+// folder drilled into, else the whole wiki. Loaded for members only.
 (function () {
   const API = window.DEXIO_API, W = window.DEXIO_WORKSPACE;
   if (!API || !W) return;
@@ -86,9 +90,11 @@
                    ? "Publish a folder or the whole wiki"
                    : "Anyone can find it on dexio.wiki, read it and make a copy") },
   };
-  // What Visibility is set to in the dialog but not yet applied, and the
-  // Publish form's data. Nothing in Visibility changes until Update (Forrest,
-  // 2026-10-01: "the done button should be an Update button"); closing discards it.
+  // Published on dexio.wiki when picked but not yet published, and the Publish
+  // form's data. Restricted and Anyone with the link apply as they are picked;
+  // Published waits for Publish, and closing the dialog or picking another
+  // level drops it. (From 9e4ed3a to this change everything waited for an
+  // Update button at the foot, which is gone.)
   let staged = null, pstate = null;
   let role = "viewer", opening = "wiki";   // opening: the kind being loaded
 
@@ -213,7 +219,9 @@
     dlg.hidden = true;
     dlg.innerHTML =
       `<div class="sd-box" role="dialog" aria-modal="true" aria-labelledby="sd-title">` +
-      `<h2 id="sd-title"></h2><p class="sd-what"></p>` +
+      `<div class="sd-head"><h2 id="sd-title"></h2>` +
+      `<button type="button" class="sd-close" aria-label="Close" title="Close (Esc)">${X}</button></div>` +
+      `<p class="sd-what"></p>` +
       // Visibility comes first, under the title (Forrest, 2026-10-01: "the dropdown
       // should be at the top, yes? and perhaps change the name to something else from
       // 'general access'"); the people below it are only for Restricted.
@@ -238,7 +246,11 @@
       `<input id="sd-p-publisher" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" ` +
       `maxlength="39" placeholder="wrenfield-roasters"></label></div>` +
       `<p class="pd-by"></p>` +
+      // The second press Published takes; Save once it is, for its name and description.
+      `<div class="sd-pfoot"><button class="sd-primary sd-pub" type="button">Publish</button></div>` +
       `</div>` +
+      // Visibility's progress and errors, and Publish's.
+      `<p class="sd-msg" id="sd-g-msg" role="status" aria-live="polite"></p>` +
       // Only under Restricted (Forrest, 2026-10-01: "this UI should only be visible if
       // Restricted is selected"): once anyone can read it, viewers add nothing.
       `<div class="sd-whosec">` +
@@ -253,9 +265,7 @@
       `<p class="sd-hint" id="sd-role-hint" hidden></p>` +
       `<p class="sd-msg" id="sd-msg" role="status" aria-live="polite"></p></form>` +
       `<h3 class="sd-h">People with access</h3><ul class="sd-people"></ul></div>` +
-      // Update's progress and errors, just above it.
-      `<p class="sd-msg" id="sd-g-msg" role="status" aria-live="polite"></p>` +
-      `<div class="sd-foot"><button class="sd-primary sd-update" type="button">Update</button></div></div>`;
+      `</div>`;
     document.body.append(dlg);
     const box = dlg.querySelector(".sd-box");
     dlg.addEventListener("pointerdown", (e) => {
@@ -273,7 +283,9 @@
       if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
       else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
     });
-    dlg.querySelector(".sd-update").onclick = update;
+    dlg.querySelector(".sd-close").onclick = close;
+    dlg.querySelector(".sd-pub").onclick = publish;
+    dlg.querySelector(".sd-publish").addEventListener("input", showPubButton);
     dlg.querySelector(".sd-copy").onclick = copy;
     dlg.querySelector(".sd-add").onsubmit = add;
     picker(dlg.querySelector("#sd-role"), "end",
@@ -282,7 +294,7 @@
     picker(dlg.querySelector("#sd-public"), "start",
            () => ({ off: ACCESS.off, link: ACCESS.link,
                     published: { ...ACCESS.published, off: !!cur && !cur.public.publishable } }),
-           () => (cur ? shown(cur) : "off"), stage);
+           () => (cur ? shown(cur) : "off"), choose);
   }
 
   function msg(text, bad) {
@@ -384,7 +396,7 @@
           : "the folder " + via.path} is shared that way. Change it there.`
       : lv === "published" ? (d.public.listed
           ? "Anyone can find it on dexio.wiki, read it and make a copy."
-          : "Give it a name and a line on what it is, then click Update.")
+          : "Give it a name and a line on what it is, then click Publish.")
       : lv === "link" ? "Anyone with the link can view it without signing in."
       : "Only people with access can open it with the link.";
     showPublish(d, lv === "published" && !via);
@@ -399,13 +411,46 @@
     return (!d.public.via && staged) || level(d);
   }
 
-  function stage(v) {
-    if (!cur) return;
-    staged = v === level(cur) ? null : v;
+  // A level picked in Visibility. Restricted and Anyone with the link apply at
+  // once and the dialog stays open on the result; Published opens its form and
+  // waits for Publish. Picking what it already is drops a waiting Published.
+  async function choose(v) {
+    if (!cur || busy) return;
+    const t = cur.target, was = level(cur);
     gmsg("");
-    render(cur);
-    if (v === "published") {
+    if (v === "published" && was !== "published") {
+      staged = v;
+      render(cur);
       setTimeout(() => { const f = dlg.querySelector("#sd-p-title"); if (f && !f.closest("[hidden]")) f.focus(); }, 0);
+      return;
+    }
+    staged = null;
+    if (v === was) { render(cur); return; }
+    busy = true;
+    staged = v;                               // shows the pick while it saves
+    render(cur);
+    gmsg("Saving…");
+    try {
+      if (v === "link" && was === "published") {
+        await call("POST", "publish", null, { kind: t.kind, path: t.path, on: false });
+        pstate = null;
+        staged = null;
+        render(await call("GET", "share", { kind: t.kind, path: t.path }));
+      } else {
+        staged = null;
+        render(await call("POST", "share/public", null, { kind: t.kind, path: t.path, on: v === "link" }));
+      }
+      gmsg(was === "published" ? (v === "link"
+          ? "Taken off dexio.wiki. Anyone with the link can still view it."
+          : "Taken off dexio.wiki. Only people with access can open it now.")
+        : v === "link" ? "Saved. Anyone with the link can view it now."
+        : "Saved. Only people with access can open it now.");
+    } catch (err) {
+      staged = null;
+      render(cur);
+      gmsg(err.message, true);
+    } finally {
+      busy = false;
     }
   }
 
@@ -435,6 +480,7 @@
       if (cur !== d) return;                  // another target opened meanwhile
       fillPublish(pstate);
     }
+    showPubButton();
     sec.hidden = false;
   }
 
@@ -484,18 +530,13 @@
       (naming && dlg.querySelector("#sd-p-publisher").value.trim() !== "");
   }
 
-  function toast(text) {
-    let t = document.getElementById("toast");
-    if (!t) {
-      t = el("div");
-      t.id = "toast";
-      t.setAttribute("role", "status");
-      (document.getElementById("wrap") || document.body).appendChild(t);
-    }
-    t.textContent = text;
-    t.hidden = false;
-    clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => { t.hidden = true; }, 4000);
+  // Publish while Published waits; once published, Save, shown only when the
+  // name or description says something new.
+  function showPubButton() {
+    if (!cur) return;
+    const b = dlg.querySelector(".sd-pub"), live = level(cur) === "published";
+    b.textContent = live ? "Save" : "Publish";
+    b.parentElement.hidden = live && !fieldsChanged();
   }
 
   // The dialog shares what Share was pressed on (the page open, else the folder in
@@ -587,43 +628,27 @@
     }
   }
 
-  // Update applies what Visibility is set to, and the Publish form, then closes.
-  // With nothing changed it just closes, as Done did.
-  async function update() {
-    if (!cur) { close(); return; }
-    if (busy) return;
-    const t = cur.target, was = level(cur), want = shown(cur);
-    const editing = want === "published" && !cur.public.via && fieldsChanged();
-    if (want === was && !editing) { close(); return; }
+  // Publish (the second press Published takes), or Save for a new name or
+  // description once it is published. The dialog stays open on the result.
+  async function publish() {
+    if (!cur || busy || cur.public.via) return;
+    const t = cur.target, was = level(cur);
     busy = true;
-    gmsg(want === "published" ? (was === "published" ? "Saving…" : "Publishing…") : "Updating…");
+    gmsg(was === "published" ? "Saving…" : "Publishing…");
     try {
-      if (want === "published") {
-        const body = { kind: t.kind, path: t.path, on: true,
-                       title: dlg.querySelector("#sd-p-title").value,
-                       description: dlg.querySelector("#sd-p-desc").value };
-        if (!dlg.querySelector(".sd-publish .pd-pubname").hidden) {
-          body.publisher = dlg.querySelector("#sd-p-publisher").value;
-        }
-        await call("POST", "publish", null, body);
-      } else if (want === "link") {
-        if (was === "published") {
-          await call("POST", "publish", null, { kind: t.kind, path: t.path, on: false });
-        } else {
-          await call("POST", "share/public", null, { kind: t.kind, path: t.path, on: true });
-        }
-      } else {
-        await call("POST", "share/public", null, { kind: t.kind, path: t.path, on: false });
+      const body = { kind: t.kind, path: t.path, on: true,
+                     title: dlg.querySelector("#sd-p-title").value,
+                     description: dlg.querySelector("#sd-p-desc").value };
+      if (!dlg.querySelector(".sd-publish .pd-pubname").hidden) {
+        body.publisher = dlg.querySelector("#sd-p-publisher").value;
       }
+      const s = await call("POST", "publish", null, body);
+      pstate = { key: t.kind + ":" + t.path, ...s };
+      fillPublish(pstate);
       staged = null;
-      close();
-      toast(want === "published"
-        ? (was === "published" ? "Saved. dexio.wiki shows the new details within a few minutes."
-                               : "Published on dexio.wiki.")
-        : want === "link" ? (was === "published"
-            ? "Taken off dexio.wiki. Anyone with the link can still view it."
-            : "Anyone with the link can view it now.")
-        : "Only people with access can open it now.");
+      render(await call("GET", "share", { kind: t.kind, path: t.path }));
+      gmsg(was === "published" ? "Saved. dexio.wiki shows the new details within a few minutes."
+                               : "Published on dexio.wiki.");
     } catch (err) {
       gmsg(err.message, true);
     } finally {

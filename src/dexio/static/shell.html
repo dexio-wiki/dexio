@@ -1302,6 +1302,23 @@ __THEME_HEAD__
             padding: 22px 24px 18px; border: 1px solid var(--line); border-radius: 12px;
             background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
   .sd-box h2 { margin: 0 0 4px; font-size: 19px; font-weight: 600; overflow-wrap: anywhere; }
+  /* The title, and a quiet close button at its right, as the page panel's
+     (Forrest, 2026-10-01: "This modal is also missing a close button"). Esc
+     and a click outside close it too. */
+  .sd-head { display: flex; align-items: flex-start; gap: 12px; }
+  .sd-head h2 { flex: 1 1 auto; min-width: 0; }
+  .sd-close {
+    flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px;
+    margin: -5px -8px 0 0; padding: 0; border: 0; border-radius: 8px; background: transparent;
+    color: var(--muted); cursor: pointer; transition: background .12s ease, color .12s ease;
+  }
+  .sd-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6;
+                  stroke-linecap: round; }
+  .sd-close:hover { background: var(--sunken); color: var(--text); }
+  html[data-mode="dark"] .sd-close:hover { background: var(--line); }
+  .sd-close:active { transform: scale(.94); }
+  .sd-close:focus-visible { outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
   .sd-what { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
   .sd-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12.5px;
               font-weight: 600; }
@@ -1450,6 +1467,9 @@ __THEME_HEAD__
   .sd-publish[hidden], .sd-publish label[hidden], .sd-publish button[hidden] { display: none; }
   .sd-publish .pd-shot { margin: 0 0 10px; }
   .sd-publish .pd-by { margin: 8px 0 0; }
+  /* Publish, the second press Published takes; Save once it is published. */
+  .sd-pfoot { display: flex; justify-content: flex-end; margin-top: 12px; }
+  .sd-pfoot[hidden] { display: none; }
   .sd-whosec[hidden] { display: none; }
   /* The address under Visibility, Copy at its end; a click on it selects all of it. */
   .sd-link { display: flex; align-items: stretch; margin: 12px 0 0 42px; border: 1px solid var(--line);
@@ -1469,7 +1489,7 @@ __THEME_HEAD__
   .sd-h.sd-first { margin-top: 0; }
   .sd-whosec { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
   #sd-g-msg { margin: 8px 0 0 42px; }
-  @media (max-width: 480px) { .sd-publish, .sd-link { margin-left: 0; } }
+  @media (max-width: 480px) { .sd-publish, .sd-link, #sd-g-msg { margin-left: 0; } }
   /* the dialog's buttons set display, which would show one marked hidden */
   .pd-box button[hidden], .pd-box label[hidden], .pd-box p[hidden] { display: none; }
   .sd-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
