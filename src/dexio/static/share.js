@@ -67,7 +67,7 @@
     '</path></svg>';
   const UPLOAD = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10.2V2.6M5.1 5.4 8 2.5' +
     'l2.9 2.9M2.8 9.6v2.6c0 .7.5 1.2 1.2 1.2h8c.7 0 1.2-.5 1.2-1.2V9.6"></path></svg>';
-  // General access has three levels (Forrest, 2026-10-01: "the options should be
+  // Visibility has three levels (Forrest, 2026-10-01: "the options should be
   // Restricted, Anyone with the link (stop google from indexing shared wikis),
   // Published on dexio.wiki"). Anyone with the link can read it, and search
   // engines are told not to list it; Published lists it on dexio.wiki, where
@@ -83,8 +83,8 @@
                    ? "Publish a folder or the whole wiki"
                    : "Anyone can find it on dexio.wiki, read it and make a copy") },
   };
-  // What General access is set to in the dialog but not yet applied, and the
-  // Publish form's data. Nothing in General access changes until Update (Forrest,
+  // What Visibility is set to in the dialog but not yet applied, and the
+  // Publish form's data. Nothing in Visibility changes until Update (Forrest,
   // 2026-10-01: "the done button should be an Update button"); closing discards it.
   let staged = null, pstate = null;
   let role = "viewer", opening = "wiki";   // opening: the kind being loaded
@@ -211,6 +211,25 @@
     dlg.innerHTML =
       `<div class="sd-box" role="dialog" aria-modal="true" aria-labelledby="sd-title">` +
       `<h2 id="sd-title"></h2><p class="sd-what"></p>` +
+      // Visibility comes first, under the title (Forrest, 2026-10-01: "the dropdown
+      // should be at the top, yes? and perhaps change the name to something else from
+      // 'general access'"); the people below it are only for Restricted.
+      `<h3 class="sd-h sd-first">Visibility</h3>` +
+      `<div class="sd-general"><span class="sd-gicon"></span><div class="sd-gtext">` +
+      `<button type="button" id="sd-public" class="sd-pick sd-access-pick" data-label="Visibility">` +
+      `<span class="sd-pick-now">Restricted</span>${CHEV}</button>` +
+      `<p class="sd-gnote"></p></div></div>` +
+      // Published on dexio.wiki: what it shows there, under Visibility.
+      `<div class="sd-publish" hidden>` +
+      `<div class="pd-shot"><img alt="" width="640" height="360"><span class="pd-size"></span></div>` +
+      `<div class="pd-fields">` +
+      `<label class="sd-lf"><span>Name</span><input id="sd-p-title" type="text" autocomplete="off"></label>` +
+      `<label class="sd-lf"><span>Description</span><textarea id="sd-p-desc" rows="2"></textarea></label>` +
+      `<label class="sd-lf pd-pubname" hidden><span>Publisher name</span>` +
+      `<input id="sd-p-publisher" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" ` +
+      `maxlength="39" placeholder="wrenfield-roasters"></label></div>` +
+      `<p class="pd-by"></p>` +
+      `</div>` +
       // Only under Restricted (Forrest, 2026-10-01: "this UI should only be visible if
       // Restricted is selected"): once anyone can read it, viewers add nothing.
       `<div class="sd-whosec">` +
@@ -226,22 +245,6 @@
       `<p class="sd-msg" id="sd-msg" role="status" aria-live="polite"></p></form>` +
       `<h3 class="sd-h">People with access</h3><ul class="sd-people"></ul></div>` +
       `<p class="sd-members" hidden></p>` +
-      `<h3 class="sd-h">General access</h3>` +
-      `<div class="sd-general"><span class="sd-gicon"></span><div class="sd-gtext">` +
-      `<button type="button" id="sd-public" class="sd-pick sd-access-pick" data-label="General access">` +
-      `<span class="sd-pick-now">Restricted</span>${CHEV}</button>` +
-      `<p class="sd-gnote"></p></div></div>` +
-      // Published on dexio.wiki: what it shows there, under General access.
-      `<div class="sd-publish" hidden>` +
-      `<div class="pd-shot"><img alt="" width="640" height="360"><span class="pd-size"></span></div>` +
-      `<div class="pd-fields">` +
-      `<label class="sd-lf"><span>Name</span><input id="sd-p-title" type="text" autocomplete="off"></label>` +
-      `<label class="sd-lf"><span>Description</span><textarea id="sd-p-desc" rows="2"></textarea></label>` +
-      `<label class="sd-lf pd-pubname" hidden><span>Publisher name</span>` +
-      `<input id="sd-p-publisher" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" ` +
-      `maxlength="39" placeholder="wrenfield-roasters"></label></div>` +
-      `<p class="pd-by"></p>` +
-      `</div>` +
       // Update's progress and errors, just above it.
       `<p class="sd-msg" id="sd-g-msg" role="status" aria-live="polite"></p>` +
       `<div class="sd-foot"><button class="sd-quiet sd-copy" type="button">Copy link</button>` +
@@ -387,7 +390,7 @@
     }
   }
 
-  // The level General access shows: what is staged, else what it is.
+  // The level Visibility shows: what is staged, else what it is.
   function shown(d) {
     return (!d.public.via && staged) || level(d);
   }
@@ -402,7 +405,7 @@
     }
   }
 
-  // Which level of General access a target is at: published (listed), anyone with
+  // Which level of Visibility a target is at: published (listed), anyone with
   // the link (public, not listed) or restricted; inherited from a wider share.
   function level(d) {
     if (d.public.via) return d.public.via.listed ? "published" : "link";
@@ -514,13 +517,23 @@
     dlg.querySelector(".sd-people").replaceChildren(el("li", "sd-loading", "Loading…"));
     dlg.hidden = false;
     document.body.classList.add("sd-open");
-    dlg.querySelector("#sd-email").focus();
+    focusFirst();
     try {
       render(await call("GET", "share", { kind, path }));
+      const a = document.activeElement;
+      if (!dlg.contains(a) || !a.offsetParent) focusFirst();
     } catch (e) {
       dlg.querySelector(".sd-people").replaceChildren();
       msg(e.message, true);
     }
+  }
+
+  // The email box where people can be added (Restricted), else Visibility, else
+  // Copy link when Visibility is fixed by a wider share.
+  function focusFirst() {
+    const email = dlg.querySelector("#sd-email"), pub = dlg.querySelector("#sd-public");
+    (!dlg.querySelector(".sd-whosec").hidden ? email
+      : !pub.disabled ? pub : dlg.querySelector(".sd-copy")).focus();
   }
 
   function close() {
@@ -568,7 +581,7 @@
     }
   }
 
-  // Update applies what General access is set to, and the Publish form, then closes.
+  // Update applies what Visibility is set to, and the Publish form, then closes.
   // With nothing changed it just closes, as Done did.
   async function update() {
     if (!cur) { close(); return; }

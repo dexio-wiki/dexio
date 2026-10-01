@@ -902,7 +902,7 @@ def dialog(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
                    "listed": any(r["kind"] == kind and r["path"] == path and r["listed_at"]
                                  for r in pub_rows),
                    "listing": listing_form(conn, ws_id, kind, path, me) if own_pub else None,
-                   # The three levels of General access (Forrest, 2026-10-01): Restricted,
+                   # The three levels of Visibility (Forrest, 2026-10-01): Restricted,
                    # Anyone with the link, Published on dexio.wiki (wiki or folder only).
                    "publishable": kind in PUBLISHABLE,
                    "via": None if not via else {

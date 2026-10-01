@@ -920,7 +920,7 @@ def server_page(api_base: str, title: str = "Dexio",
                                  acct.get("first", ""), acct.get("last", ""), ws_name,
                                  bool(ws and ws.get("role") == "owner"))
         if can_share:
-            # Publishing is a level of Share's General access again (Forrest,
+            # Publishing is a level of Share's Visibility again (Forrest,
             # 2026-10-01), so the header has Share alone.
             menu_html = (f'<button id="share-wiki" class="hbtn" type="button"'
                          f' title="Share the wiki">{SHARE_ICON}<span>Share</span></button>'

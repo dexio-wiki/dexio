@@ -1309,7 +1309,7 @@ __THEME_HEAD__
   /* Viewer or Editor, and Restricted or Public: buttons opening a menu (share.js,
      picker), never a native select (Forrest, 2026-09-28: "as a standing rule we
      should not use native browser dropdowns"). Role sits in the row as a field,
-     the height of the email box; general access is quiet bold text with a
+     the height of the email box; Visibility is quiet bold text with a
      chevron, as Google Docs' is. */
   #share-dlg .sd-pick {
     display: inline-flex; align-items: center; gap: 6px; flex: none; min-height: 0;
@@ -1413,7 +1413,7 @@ __THEME_HEAD__
   .sd-general.open .sd-gicon { background: color-mix(in srgb, var(--accent) 18%, transparent);
                                color: var(--accent); }
   .sd-gnote { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
-  /* Share's line on whether it is published, under General access. */
+  /* Share's line on whether it is published, under Visibility. */
   .sd-pubrow { margin: 12px 0 0 42px; color: var(--muted); font-size: 12.5px; }
   .sd-pubrow[hidden] { display: none; }
   /* Publish (publish.js): the share dialog's box and fields, a picture of the graph. */
@@ -1444,16 +1444,19 @@ __THEME_HEAD__
   .pd-by a { color: var(--link); }
   .pd-box .sd-foot { align-items: center; }
   .pd-gap { flex: 1; }
-  /* Published on dexio.wiki, under General access, lined up with its text. */
+  /* Published on dexio.wiki, under Visibility, lined up with its text. */
   .sd-publish { margin: 12px 0 0 42px; }
   .sd-publish[hidden], .sd-publish label[hidden], .sd-publish button[hidden] { display: none; }
   .sd-publish .pd-shot { margin: 0 0 10px; }
   .sd-publish .pd-by { margin: 8px 0 0; }
   .sd-whosec[hidden], .sd-members[hidden] { display: none; }
-  .sd-members { margin: 0 0 4px; color: var(--muted); font-size: 13px; }
+  /* Visibility opens the dialog; the people under Restricted follow, set apart. */
+  .sd-h.sd-first { margin-top: 0; }
+  .sd-whosec { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+  .sd-members { margin: 14px 0 0 42px; color: var(--muted); font-size: 12.5px; }
   .sd-members a { color: var(--link); }
   #sd-g-msg { margin: 8px 0 0 42px; }
-  @media (max-width: 480px) { .sd-publish { margin-left: 0; } }
+  @media (max-width: 480px) { .sd-publish, .sd-members { margin-left: 0; } }
   /* the dialog's buttons set display, which would show one marked hidden */
   .pd-box button[hidden], .pd-box label[hidden], .pd-box p[hidden] { display: none; }
   .sd-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 22px; }

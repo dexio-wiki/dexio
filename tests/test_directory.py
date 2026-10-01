@@ -406,16 +406,19 @@ def test_the_publish_picture_is_for_members(app):
     assert browser(app).get(f"/api/v1/publish?w={handle}&kind=wiki").status_code == 401
 
 
-def test_publishing_is_a_level_of_general_access(app):
+def test_publishing_is_a_level_of_visibility(app):
     """Forrest, 2026-10-01: back into Share, as "Restricted, Anyone with the link,
     Published on dexio.wiki"; no Publish button of its own."""
     c, _tok, handle = owner(app)
     page = c.get(f"/w/{handle}", headers=HTML).text
     assert 'id="publish-wiki"' not in page and "dexioPublish" not in page
     assert "Anyone with the link" in page and "Published on dexio.wiki" in page
-    # people only under Restricted, and Update applies General access (Forrest, 2026-10-01)
+    # people only under Restricted, and Update applies Visibility (Forrest, 2026-10-01)
     assert 'class="sd-primary sd-update" type="button">Update</button>' in page
     assert 'sd-done' not in page and 'class="sd-whosec"' in page and 'class="sd-members"' in page
+    # Visibility, not General access, and above the people (Forrest, 2026-10-01)
+    assert "General access" not in page
+    assert page.index('>Visibility</h3>') < page.index('class="sd-whosec"') < page.index('class="sd-members"')
     d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
     assert d["public"]["publishable"] is True and d["public"]["listed"] is False
     assert c.get(f"/api/v1/share?w={handle}&kind=page&path=notes/plan"
