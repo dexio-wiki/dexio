@@ -801,20 +801,26 @@ _ORDER = {"wiki": 0, "folder": 1, "page": 2}
 
 def overview(conn, ws_id: int) -> dict:
     """Every share in the workspace, as Settings > Sharing lists it:
-    {"public": [...], "people": [...], "public_pages": n, "pages": n}. Each item
+    {"public": [...], "people": [...], "public_pages": n, "published_pages": n,
+    "link_pages": n, "pages": n, "publisher": name}. Each item
     has its share's id, kind, path and title, `pages` (how many pages it reaches
     now), `exists` (False for a deleted page or a folder with no pages left:
     the share stays and applies again if one comes back), when and by whom it
     was made, and `via`: a broader share that already gives the same access,
-    so taking this one away changes nothing. People also carry email, name
-    (once they opened the link) and pending."""
+    so taking this one away changes nothing. Public items also carry `listed`,
+    and when listed the name dexio.wiki shows (`listed_title`), when it was
+    published and by whom; `published_pages` counts the pages published and
+    `link_pages` those open to anyone with the link but not published. People
+    also carry email, name (once they opened the link) and pending."""
     k = db.wiki_key(ws_id)
     titles = {r["path"]: r["title"] for r in conn.execute(
         "SELECT path, title FROM pages WHERE project=?", (k,)).fetchall()}
-    ws_name = (db.workspace(conn, ws_id) or {}).get("name") or "the wiki"
+    ws = db.workspace(conn, ws_id) or {"id": ws_id}
+    ws_name = ws.get("name") or "the wiki"
     rows = [dict(r) for r in conn.execute(
         "SELECT * FROM shares WHERE workspace_id=? ORDER BY created_at, id", (ws_id,)).fetchall()]
-    names = db.people(conn, [r["created_by"] for r in rows] + [r["user_id"] for r in rows])
+    names = db.people(conn, [r["created_by"] for r in rows] + [r["user_id"] for r in rows]
+                      + [r.get("listed_by") for r in rows])
 
     def reach(kind: str, path: str) -> list[str]:
         return [p for p in titles if covers(kind, path, "page", p)]
@@ -832,6 +838,10 @@ def overview(conn, ws_id: int) -> dict:
                 "exists": r["kind"] == "wiki" or n > 0,
                 "created_at": r["created_at"], "by": names.get(r["created_by"] or 0),
                 "listed": bool(r.get("listed_at")),
+                **({"listed_title": r.get("listed_title")
+                    or _own_words(conn, ws, r["kind"], r["path"])[0] or title(r["kind"], r["path"]),
+                    "listed_at": r["listed_at"],
+                    "listed_by": names.get(r.get("listed_by") or 0)} if r.get("listed_at") else {}),
                 "via": None if not wider else {"kind": wider["kind"], "path": wider["path"],
                                                "title": title(wider["kind"], wider["path"])}}
 
@@ -846,8 +856,20 @@ def overview(conn, ws_id: int) -> dict:
                        "name": names.get(r["user_id"]) if r["user_id"] else None,
                        "pending": not r["user_id"], "opened_at": r["accepted_at"]})
     open_pages = {p for r in pub for p in reach(r["kind"], r["path"])}
+    published = {p for r in pub if r.get("listed_at") for p in reach(r["kind"], r["path"])}
     return {"public": public, "people": people, "public_pages": len(open_pages),
-            "pages": len(titles)}
+            "published_pages": len(published), "link_pages": len(open_pages - published),
+            "pages": len(titles), "publisher": publisher_of(conn, ws_id)}
+
+
+def unlist(conn, ws_id: int, share_id: int) -> bool:
+    """Take one listing off dexio.wiki by its share's id, leaving it open to anyone
+    with the link (Settings > Sharing, Unpublish). False when it was not listed."""
+    with db.LOCK, conn:
+        cur = conn.execute("UPDATE shares SET listed_at=NULL WHERE id=? AND workspace_id=?"
+                           " AND email IS NULL AND user_id IS NULL AND listed_at IS NOT NULL",
+                           (share_id, ws_id))
+    return cur.rowcount > 0
 
 
 def _wider(a: dict, b: dict) -> bool:

@@ -667,6 +667,7 @@ DONE = {
     "unshared": "Stopped sharing. Their link no longer opens it.",
     "private": "Made private. Its public address now asks people to sign in.",
     "extra": "Removed. The wider share it sat under still gives the same access.",
+    "unpublished": "Unpublished. It is off dexio.wiki, and anyone with the link can still open it.",
 }
 BILLING_DONE = ("Thanks. The plan changes as soon as Stripe confirms the payment, usually "
                 "within a few seconds; reload if it has not yet.")
@@ -1047,6 +1048,15 @@ def _sharing(ws: dict, ov: dict, team: bool) -> str:
     def menu(it: dict, label: str, ask: str) -> str:
         return _row_menu(it["title"], [(f'{base}/{it["id"]}/stop{_in(ws)}', "", label, ask)])
 
+    # Public things in two panels, as Visibility's levels in the Share dialog
+    # (Forrest, 2026-10-01: "how-we-build-dexio is public on dexio.wiki, but it's
+    # listed under anyone with the link"): Published on dexio.wiki, then Anyone
+    # with the link. A published thing is open with its link too; it shows once.
+    def count(n: int) -> str:
+        total = int(ov.get("pages") or 0)
+        return (f"All {_pages(total)}" if total and n == total
+                else f"{n:,} of {_pages(total)}" if n else "")
+
     def pub_row(it: dict) -> str:
         name = "the whole wiki" if it["kind"] == "wiki" else it["title"]
         if it["via"]:
@@ -1054,20 +1064,49 @@ def _sharing(ws: dict, ov: dict, team: bool) -> str:
                                      f" {_via(it['via'])}.")
         else:
             act = menu(it, "Make private", f"Make {name} private? Its address will ask people"
-                                           " to sign in." + (" It also leaves the public wikis"
-                                                             " on dexio.wiki." if it.get("listed")
-                                                             else ""))
-        tag = "Published on dexio.wiki" if it.get("listed") and not it["via"] else ""
-        return _row([_target(ws, it, tag), _since(it, team), act], hide)
+                                           " to sign in.")
+        return _row([_target(ws, it), _since(it, team), act], hide)
 
-    n, total = int(ov.get("public_pages") or 0), int(ov.get("pages") or 0)
-    count = (f"All {_pages(total)}" if public and total and n == total
-             else f"{n:,} of {_pages(total)}" if public else "")
-    pub_rows = "".join(pub_row(it) for it in public) or _empty(3, "Nothing is public.")
-    panels = [f"""<div class="panel" id="public"><div class="phead"><h2>Anyone with the link</h2>
-      <span class="muted">{e(count)}</span></div>
+    def published_row(it: dict) -> str:
+        name = it.get("listed_title") or it["title"]
+        items = [(f'{base}/{it["id"]}/unpublish{_in(ws)}', "", "Unpublish",
+                  f"Take {name} off dexio.wiki? Anyone with the link can still open it.")]
+        if it["via"]:
+            items.append((f'{base}/{it["id"]}/stop{_in(ws)}', "", "Remove",
+                          f"Take {name} off dexio.wiki and remove this share? It stays open to"
+                          f" anyone with the link through {_via(it['via'])}."))
+        else:
+            items.append((f'{base}/{it["id"]}/stop{_in(ws)}', "", "Make private",
+                          f"Make {name} private? It leaves the public wikis on dexio.wiki, and"
+                          " its address will ask people to sign in."))
+        # the name it has on dexio.wiki, then what of the wiki it is
+        what = _target(ws, {**it, "title": name})
+        if it["kind"] == "wiki":
+            what = what.replace(">The whole wiki<", f">{e(name)}<", 1).replace(
+                '<span class="sub">Every page,', '<span class="sub">The whole wiki: every page,', 1)
+        else:
+            what = what.replace('<span class="sub">Folder, ',
+                                f'<span class="sub">Folder {e(it["path"])}, ', 1)
+        by = (f'<span class="sub">by {e(it["listed_by"])}</span>'
+              if team and it.get("listed_by") else "")
+        return _row([what, _date(it["listed_at"]) + by, _row_menu(name, items)], hide)
+
+    published = [it for it in public if it.get("listed")]
+    link = [it for it in public if not it.get("listed")]
+    pub_name = ov.get("publisher") or ""
+    where = (f' under <a href="https://dexio.wiki/wikis/{e(pub_name.lower())}/">{e(pub_name)}</a>'
+             if pub_name and published else "")
+    rows = "".join(published_row(it) for it in published) or _empty(3, "Nothing is published.")
+    panels = [f"""<div class="panel" id="published"><div class="phead"><h2>Published on
+      dexio.wiki</h2><span class="muted">{e(count(int(ov.get("published_pages") or 0)))}</span></div>
+      <p class="muted">Listed with the <a href="https://dexio.wiki/wikis/">public wikis</a>{where}.
+        Anyone can read these and make a copy.</p>
+      {_table(["What", "Published", ""], rows, hide)}</div>"""]
+    rows = "".join(pub_row(it) for it in link) or _empty(3, "Nothing else is public.")
+    panels.append(f"""<div class="panel" id="public"><div class="phead"><h2>Anyone with the link</h2>
+      <span class="muted">{e(count(int(ov.get("link_pages") or 0)))}</span></div>
       <p class="muted">Anyone can open these without signing in.</p>
-      {_table(["What", "Made public", ""], pub_rows, hide)}</div>"""]
+      {_table(["What", "Made public", ""], rows, hide)}</div>""")
 
     # One heading row per person, then what they can view under it: a person
     # with three shares reads once, and a phone has room for the paths.

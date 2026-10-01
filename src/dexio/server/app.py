@@ -1513,6 +1513,20 @@ def get_app(db_path: str | None = None) -> FastAPI:
         done = "extra" if was["via"] else "unshared" if "email" in was else "private"
         return settings_done("sharing", done, ws)
 
+    @app.post("/settings/sharing/{share_id}/unpublish", response_class=HTMLResponse)
+    async def settings_unpublish(request: Request, share_id: int):
+        """Settings > Sharing: take something off dexio.wiki and leave it open to
+        anyone with the link, as Anyone with the link does in the Share dialog."""
+        user, ws, _f, bounce = await settings_post(request)
+        if bounce:
+            return bounce
+        if not ws:
+            return render_settings(request, user, ws, "sharing")
+        if not shares.unlist(conn, ws["id"], share_id):
+            return render_settings(request, user, ws, "sharing", status=404,
+                                   error="That is not published.")
+        return settings_done("sharing", "unpublished", ws)
+
     async def send_invite(request: Request, user: dict, ws: dict, to: str) -> str:
         """Email a new invite to `to`. The link goes only in the email: if it cannot
         be sent, the new invite is withdrawn and "" comes back. On success, any

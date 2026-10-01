@@ -245,11 +245,44 @@ def test_a_cross_site_copy_is_refused(app):
 
 
 def test_settings_sharing_says_what_is_listed(app):
+    """Forrest, 2026-10-01: "how-we-build-dexio is public on dexio.wiki, but it's
+    listed under anyone with the link". Published things get their own panel, as
+    Visibility's levels in the Share dialog, and Unpublish keeps the link open."""
     c, tok, handle = owner(app)
     listed_notes(app, c, handle, tok)
+    public(c, handle, "page", "index")                 # open with the link, not published
+    ov = shares.overview(app.state.conn, ws_id(app, handle))
+    assert (ov["published_pages"], ov["link_pages"], ov["publisher"]) == (3, 1, "owner-co")
     page = c.get(f"/settings/sharing?w={handle}").text
-    assert "Published on dexio.wiki" in page
-    assert "It also leaves the public wikis on dexio.wiki." in page
+    panel = lambda pid: page.split(f'id="{pid}"', 1)[1].split('<div class="panel"', 1)[0]  # noqa: E731
+    assert page.index('id="published"') < page.index('id="public"') < page.index('id="people"')
+    pub, link = panel("published"), panel("public")
+    assert "Notes starter" in pub and "Folder notes, 3 pages" in pub      # its dexio.wiki name
+    assert "notes" not in link and "index" in link
+    assert 'href="https://dexio.wiki/wikis/owner-co/"' in pub and ">Unpublish<" in pub
+    assert "It leaves the public wikis on dexio.wiki" in pub and ">Make private<" in pub
+    assert ">Unpublish<" not in link and "dexio.wiki" not in link
+    assert f"3 of {ov['pages']} pages" in pub and f"1 of {ov['pages']} pages" in link
+    sid = next(it["id"] for it in ov["public"] if it["listed"])
+    r = c.post(f"/settings/sharing/{sid}/unpublish?w={handle}",
+               headers={"origin": "https://evil.example"})
+    assert r.status_code == 403
+    r = c.post(f"/settings/sharing/{sid}/unpublish?w={handle}")
+    assert r.status_code == 303 and r.headers["location"].endswith("done=unpublished")
+    assert entries(app) == []
+    assert browser(app).get(f"/api/v1/note?w={handle}&path=notes/plan").status_code == 200
+    page = c.get(r.headers["location"]).text
+    assert "Unpublished." in page and "Nothing is published." in page
+    assert "notes" in panel("public")
+    assert c.post(f"/settings/sharing/{sid}/unpublish?w={handle}").status_code == 404
+    # another workspace cannot unpublish it
+    public(c, handle, "folder", "notes")
+    listed(c, handle, "folder", "notes")
+    other = browser(app)
+    signup(other, "other-pub@example.com")
+    mine = other.get("/api/v1/workspaces").json()["current"]
+    assert other.post(f"/settings/sharing/{sid}/unpublish?w={mine}").status_code == 404
+    assert len(entries(app)) == 1
 
 
 def test_robots_keep_crawlers_off_copy(app):
