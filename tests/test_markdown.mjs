@@ -164,6 +164,27 @@ check("a list item stops at the next block", () => {
   assert.match(html, /<li>a<\/li>\n<\/ul>\n<hr>/);
 });
 
+check("numbered steps split by code blocks keep counting", () => {
+  // The guides' how-to steps: a code block after step 1 started a new list, and
+  // every step after it showed "1." (Forrest, 2026-10-01).
+  const html = renderMarkdown(
+    "1. Scaffold:\n\n```js\nx()\n```\n\n2. Define the content.\n\n3. Decide what is published:\n\n```ts\ny()\n```\n\n4. Put the head tags in one layout.", "x");
+  assert.match(html, /<ol>\n<li>Scaffold:<\/li>\n<\/ol>\n<pre><code>x\(\)<\/code><\/pre>/);
+  assert.match(html, /<ol start="2">\n<li>Define the content\.<\/li>\n<li>Decide what is published:<\/li>\n<\/ol>/,
+               "2 and 3, split only by a blank line, are one list starting at 2");
+  assert.match(html, /<ol start="4">\n<li>Put the head tags in one layout\.<\/li>\n<\/ol>$/);
+});
+
+check("a blank line between items does not end the list", () => {
+  const ol = renderMarkdown("1. a\n\n1. b\n\n\n1. c\n\nAfter.", "x");
+  assert.equal((ol.match(/<ol/g) || []).length, 1, "one list, so the browser counts 1, 2, 3");
+  assert.match(ol, /<li>c<\/li>\n<\/ol>\n<p>After\.<\/p>/);
+  const ul = renderMarkdown("- a\n\n- b", "x");
+  assert.match(ul, /^<ul>\n<li>a<\/li>\n<li>b<\/li>\n<\/ul>$/);
+  const mixed = renderMarkdown("- a\n\n1. b", "x");
+  assert.match(mixed, /<\/ul>\n<ol>\n<li>b<\/li>/, "a different kind of list still starts its own");
+});
+
 check("fenced code is not treated as markup", () => {
   const html = renderMarkdown("```\n**not bold** [[not a link]]\n```", "x");
   assert.match(html, /<pre><code>/);

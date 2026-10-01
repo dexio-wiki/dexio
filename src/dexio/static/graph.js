@@ -1886,7 +1886,19 @@
         continue;
       }
 
-      if (/^\s*$/.test(line)) { closeList(); i++; continue; }
+      if (/^\s*$/.test(line)) {
+        // A blank line between two items of the same list does not end the list,
+        // as in CommonMark: "1. a", a blank line, then "1. b" counts 1, 2, and
+        // steps written with blank lines between them stay one list (2026-10-01).
+        let j = i + 1;
+        while (j < lines.length && /^\s*$/.test(lines[j])) j++;
+        const next = j < lines.length ? lines[j] : "";
+        const same = list === "ol" ? /^\s*\d+[.)]\s+/.test(next)
+                   : list === "ul" ? /^\s*[-*+•]\s+/.test(next) : false;
+        if (!same) closeList();
+        i = j;
+        continue;
+      }
 
       if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
         closeList(); out.push("<hr>"); i++; continue;
@@ -1919,14 +1931,22 @@
       }
 
       const ul = line.match(/^\s*[-*+•]\s+(.*)$/);
-      const ol = line.match(/^\s*\d+[.)]\s+(.*)$/);
+      const ol = line.match(/^\s*(\d{1,9})[.)]\s+(.*)$/);
       if (ul || ol) {
         const want = ul ? "ul" : "ol";
-        if (list !== want) { closeList(); out.push("<" + want + ">"); list = want; }
+        if (list !== want) {
+          closeList();
+          // A numbered list counts from its first item's number, as in CommonMark.
+          // Steps split by a code block or a paragraph start a new list each
+          // time, and every one of them showed "1." (Forrest, 2026-10-01).
+          const start = ol ? parseInt(ol[1], 10) : 1;
+          out.push(ol && start !== 1 ? '<ol start="' + start + '">' : "<" + want + ">");
+          list = want;
+        }
         // A wrapped item goes on until a blank line or the start of another
         // block, indented or not, the way CommonMark continuation lines do.
         // Taking only the marker line dropped the rest into a stray <p>.
-        const buf = [(ul || ol)[1]];
+        const buf = [ul ? ul[1] : ol[2]];
         i++;
         while (i < lines.length && !ITEM_END.test(lines[i]) && !tableAt(lines, i)) {
           buf.push(lines[i++].trim());
