@@ -1452,6 +1452,13 @@ __THEME_HEAD__
   .pd-by a { color: var(--link); }
   .pd-box .sd-foot { align-items: center; }
   .pd-gap { flex: 1; }
+  /* Published on dexio.wiki, under General access, lined up with its text. */
+  .sd-publish { margin: 12px 0 0 42px; }
+  .sd-publish[hidden], .sd-publish label[hidden], .sd-publish button[hidden] { display: none; }
+  .sd-publish .pd-shot { margin: 0 0 10px; }
+  .sd-publish .pd-by { margin: 8px 0 0; }
+  .sd-pactions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+  @media (max-width: 480px) { .sd-publish { margin-left: 0; } }
   /* the dialog's buttons set display, which would show one marked hidden */
   .pd-box button[hidden], .pd-box label[hidden], .pd-box p[hidden] { display: none; }
   .sd-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 22px; }

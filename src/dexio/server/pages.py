@@ -1064,7 +1064,7 @@ def _sharing(ws: dict, ov: dict, team: bool) -> str:
     count = (f"All {_pages(total)}" if public and total and n == total
              else f"{n:,} of {_pages(total)}" if public else "")
     pub_rows = "".join(pub_row(it) for it in public) or _empty(3, "Nothing is public.")
-    panels = [f"""<div class="panel" id="public"><div class="phead"><h2>Public on the web</h2>
+    panels = [f"""<div class="panel" id="public"><div class="phead"><h2>Anyone with the link</h2>
       <span class="muted">{e(count)}</span></div>
       <p class="muted">Anyone can open these without signing in.</p>
       {_table(["What", "Made public", ""], pub_rows, hide)}</div>"""]

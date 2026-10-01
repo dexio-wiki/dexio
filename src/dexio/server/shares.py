@@ -206,14 +206,16 @@ SITEMAP_MAX = 50000   # the sitemap protocol's limit for one file
 
 
 def public_pages(conn, limit: int = SITEMAP_MAX) -> list[tuple[str, str, float]]:
-    """Every page anyone may read without signing in, across all workspaces:
-    (workspace handle, page path, last change), for /sitemap.xml. Each workspace
-    with something public also gets its own address, path ""."""
+    """Every published page, across all workspaces: (workspace handle, page path,
+    last change), for /sitemap.xml. Each workspace with something published also
+    gets its own address, path "". Only what is published (listed on dexio.wiki)
+    is for search engines; what is open to anyone with the link is not (Forrest,
+    2026-10-01: "Anyone with the link (stop google from indexing shared wikis)")."""
     out: list[tuple[str, str, float]] = []
     seen: set[tuple[str, str]] = set()
     rows = conn.execute("SELECT s.workspace_id, s.kind, s.path, w.handle FROM shares s"
                         " JOIN workspaces w ON w.id = s.workspace_id"
-                        " WHERE s.email IS NULL AND s.user_id IS NULL"
+                        " WHERE s.email IS NULL AND s.user_id IS NULL AND s.listed_at IS NOT NULL"
                         " ORDER BY s.workspace_id, s.kind, s.path").fetchall()
     for r in rows:
         k = db.wiki_key(r["workspace_id"])
@@ -509,6 +511,17 @@ def set_listed(conn, ws_id: int, kind: str, path: str, on: bool, *, by: int | No
             " listed_author=NULL WHERE id=?",
             (time.time(), by, t, d, row["id"]))
     return on
+
+
+def published_access(conn, ws_id: int) -> Access:
+    """What of a workspace is published, as an Access: the part search engines may
+    list. The rest of what is public (anyone with the link) tells them not to."""
+    rows = conn.execute("SELECT kind, path FROM shares WHERE workspace_id=? AND email IS NULL"
+                        " AND user_id IS NULL AND listed_at IS NOT NULL", (ws_id,)).fetchall()
+    return Access(ws_id, "public" if rows else None,
+                  whole=any(r["kind"] == "wiki" for r in rows),
+                  folders=frozenset(r["path"] for r in rows if r["kind"] == "folder"),
+                  pages=frozenset(r["path"] for r in rows if r["kind"] == "page"))
 
 
 def listed(conn, share_id) -> dict | None:
@@ -871,7 +884,8 @@ def dialog(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
                                      "title": title_of(conn, ws_id, r["kind"], r["path"])}})
     pub_rows = [r for r in here if r["email"] is None and r["user_id"] is None]
     own_pub = any(r["kind"] == kind and r["path"] == path for r in pub_rows)
-    via = next((r for r in pub_rows if not (r["kind"] == kind and r["path"] == path)), None)
+    wider = [r for r in pub_rows if not (r["kind"] == kind and r["path"] == path)]
+    via = next((r for r in wider if r["listed_at"]), None) or next(iter(wider), None)
     members = [{"id": m["id"], "email": m["email"],
                 "name": " ".join(p for p in (m["first_name"] or "", m["last_name"] or "") if p)
                 or None, "role": m["role"], "you": m["id"] == me}
@@ -888,8 +902,12 @@ def dialog(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
                    "listed": any(r["kind"] == kind and r["path"] == path and r["listed_at"]
                                  for r in pub_rows),
                    "listing": listing_form(conn, ws_id, kind, path, me) if own_pub else None,
+                   # The three levels of General access (Forrest, 2026-10-01): Restricted,
+                   # Anyone with the link, Published on dexio.wiki (wiki or folder only).
+                   "publishable": kind in PUBLISHABLE,
                    "via": None if not via else {
                        "kind": via["kind"], "path": via["path"],
+                       "listed": bool(via["listed_at"]),
                        "title": title_of(conn, ws_id, via["kind"], via["path"])}},
         # Editors are members: only the whole wiki has them, and only owners
         # add them, within the plan's member limit.

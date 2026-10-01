@@ -2143,6 +2143,10 @@ def get_app(db_path: str | None = None) -> FastAPI:
         anyone = shares.access(conn, ws["id"], None)
         row = db.note(conn, db.wiki_key(ws["id"]), page) if page else None
         public = anyone.any and (anyone.sees(page) if row else not page)
+        # Search engines list only what is published; anyone-with-the-link pages
+        # keep their previews but say noindex (Forrest, 2026-10-01).
+        listed_acc = shares.published_access(conn, ws["id"])
+        indexable = listed_acc.any and (listed_acc.sees(page) if row else not page)
         title, seo = f"{ws['name']} · Dexio", None
         if public:
             from ..parse import description_of
@@ -2161,6 +2165,9 @@ def get_app(db_path: str | None = None) -> FastAPI:
         if not public:
             # Shared with chosen people only: not for search engines.
             response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        elif not indexable:
+            # Anyone with the link, not published: readable, not listed.
+            response.headers["X-Robots-Tag"] = "noindex"
         response.headers["Referrer-Policy"] = "same-origin"
         if user:
             _sync_theme(request, response, user["email"])

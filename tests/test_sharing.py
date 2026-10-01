@@ -91,9 +91,11 @@ def test_a_public_page_opens_for_anyone_and_shows_nothing_else(app):
     anon = browser(app)
     page = anon.get(f"/w/{handle}/notes/plan", headers={"accept": "text/html"})
     assert page.status_code == 200
-    # public pages are for search engines too (Forrest: "public wiki should bring
-    # in search traffic"): no noindex, a title, a description and a canonical address
-    assert "x-robots-tag" not in page.headers
+    # open to anyone with the link: a title, a description and a canonical address for
+    # link previews, but not for search engines, which list only what is published
+    # (Forrest, 2026-10-01: "Anyone with the link (stop google from indexing shared
+    # wikis)"; test_directory checks a published page)
+    assert page.headers["x-robots-tag"] == "noindex"
     assert "<title>Plan · owner&#x27;s Workspace</title>" in page.text
     assert '<meta name="description" content="The plan.' in page.text
     assert f'<link rel="canonical" href="https://app.dexio.wiki/w/{handle}/notes/plan">' in page.text
@@ -398,8 +400,10 @@ def test_deleting_the_workspace_or_the_account_removes_its_shares(app, sent):
                                       (wid,)).fetchone()
 
 
-def test_public_pages_are_in_the_sitemap_and_robots_points_to_it(app, sent):
+def test_published_pages_are_in_the_sitemap_and_robots_points_to_it(app, sent):
     c, _tok, handle = owner_with_wiki(app)
+    r = c.post(f"/settings/publisher?w={handle}", data={"publisher": "owner-co"})
+    assert r.status_code == 303
     anon = browser(app)
     robots = anon.get("/robots.txt")
     assert robots.status_code == 200
@@ -410,16 +414,27 @@ def test_public_pages_are_in_the_sitemap_and_robots_points_to_it(app, sent):
     assert empty.status_code == 200 and "<url>" not in empty.text
     public(c, handle, "folder", "notes")
     share(c, handle, "page", "secret/deal", "kim@example.com")   # by email: not listed
+    # anyone with the link is not for search engines; published is
+    assert "<url>" not in anon.get("/sitemap.xml").text
+    r = c.post(f"/api/v1/publish?w={handle}", json={"kind": "folder", "path": "notes", "on": True,
+                                                    "title": "Notes"})
+    assert r.status_code == 200, r.text
     locs = re.findall(r"<loc>([^<]+)</loc>", anon.get("/sitemap.xml").text)
     base = f"https://app.dexio.wiki/w/{handle}"
     assert locs == [base, f"{base}/notes/deep/more", f"{base}/notes/plan"]
-    public(c, handle, "folder", "notes", on=False)
-    assert "<url>" not in anon.get("/sitemap.xml").text
-    # the workspace's own address is indexable while something in it is public
-    public(c, handle, "page", "index")
+    page = anon.get(f"/w/{handle}/notes/plan", headers={"accept": "text/html"})
+    assert "x-robots-tag" not in page.headers
+    # the workspace's own address is indexable while something in it is published
     home = anon.get(f"/w/{handle}", headers={"accept": "text/html"})
     assert home.status_code == 200 and "x-robots-tag" not in home.headers
     assert f'<link rel="canonical" href="{base}">' in home.text
+    # unpublished: still readable with the link, out of the sitemap, noindex again
+    c.post(f"/api/v1/publish?w={handle}", json={"kind": "folder", "path": "notes", "on": False})
+    assert "<url>" not in anon.get("/sitemap.xml").text
+    page = anon.get(f"/w/{handle}/notes/plan", headers={"accept": "text/html"})
+    assert page.status_code == 200 and page.headers["x-robots-tag"] == "noindex"
+    public(c, handle, "folder", "notes", on=False)
+    assert "<url>" not in anon.get("/sitemap.xml").text
 
 
 def test_access_rules():

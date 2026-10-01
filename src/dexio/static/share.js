@@ -62,11 +62,28 @@
         : "Joins the workspace and can change the wiki"),
     },
   };
+  const LINK = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.7 9.3a2.6 2.6 0 0 0 3.7 0' +
+    'l2.1-2.1a2.6 2.6 0 0 0-3.7-3.7l-1 1M9.3 6.7a2.6 2.6 0 0 0-3.7 0L3.5 8.8a2.6 2.6 0 0 0 3.7 3.7l1-1">' +
+    '</path></svg>';
+  const UPLOAD = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 10.2V2.6M5.1 5.4 8 2.5' +
+    'l2.9 2.9M2.8 9.6v2.6c0 .7.5 1.2 1.2 1.2h8c.7 0 1.2-.5 1.2-1.2V9.6"></path></svg>';
+  // General access has three levels (Forrest, 2026-10-01: "the options should be
+  // Restricted, Anyone with the link (stop google from indexing shared wikis),
+  // Published on dexio.wiki"). Anyone with the link can read it, and search
+  // engines are told not to list it; Published lists it on dexio.wiki, where
+  // anyone can find it and make a copy, and only that is for search engines.
+  // Publishing takes a wiki or a folder, with a name, a description and the
+  // workspace's publisher name. It replaced a separate Publish button the same day.
   const ACCESS = {
     off: { name: "Restricted", icon: LOCK, desc: () => "Only people with access can open it" },
-    on: { name: "Public on the web", icon: GLOBE,
-          desc: () => "Anyone can view it without signing in" },
+    link: { name: "Anyone with the link", icon: LINK,
+            desc: () => "Anyone with the link can view it without signing in" },
+    published: { name: "Published on dexio.wiki", icon: UPLOAD,
+                 desc: () => (cur && !cur.public.publishable
+                   ? "Publish a folder or the whole wiki"
+                   : "Anyone can find it on dexio.wiki, read it and make a copy") },
   };
+  let publishing = false, pstate = null;   // Published picked, not yet published; its form
   let role = "viewer", opening = "wiki";   // opening: the kind being loaded
 
   function initials(name) {
@@ -208,11 +225,19 @@
       `<button type="button" id="sd-public" class="sd-pick sd-access-pick" data-label="General access">` +
       `<span class="sd-pick-now">Restricted</span>${CHEV}</button>` +
       `<p class="sd-gnote"></p></div></div>` +
-      // Publishing has its own button and dialog (publish.js; Forrest, 2026-10-01:
-      // "should we have a second button for publish, rather than lump it into
-      // share?", "yes"). Share says whether it is published and opens Publish.
-      `<p class="sd-pubrow" hidden><span class="sd-pubtext"></span> ` +
-      `<button type="button" class="sd-link" id="sd-pub">Publish</button></p>` +
+      // Published on dexio.wiki: what it shows there, under General access.
+      `<div class="sd-publish" hidden>` +
+      `<div class="pd-shot"><img alt="" width="640" height="360"><span class="pd-size"></span></div>` +
+      `<div class="pd-fields">` +
+      `<label class="sd-lf"><span>Name</span><input id="sd-p-title" type="text" autocomplete="off"></label>` +
+      `<label class="sd-lf"><span>Description</span><textarea id="sd-p-desc" rows="2"></textarea></label>` +
+      `<label class="sd-lf pd-pubname" hidden><span>Publisher name</span>` +
+      `<input id="sd-p-publisher" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" ` +
+      `maxlength="39" placeholder="wrenfield-roasters"></label></div>` +
+      `<p class="pd-by"></p>` +
+      `<p class="sd-msg" id="sd-p-msg" role="status" aria-live="polite"></p>` +
+      `<div class="sd-pactions"><button class="sd-quiet" type="button" id="sd-p-cancel">Cancel</button>` +
+      `<button class="sd-primary" type="button" id="sd-p-go">Publish</button></div></div>` +
       `<div class="sd-foot"><button class="sd-quiet sd-copy" type="button">Copy link</button>` +
       `<button class="sd-primary sd-done" type="button">Done</button></div></div>`;
     document.body.append(dlg);
@@ -235,17 +260,15 @@
     dlg.querySelector(".sd-done").onclick = close;
     dlg.querySelector(".sd-copy").onclick = copy;
     dlg.querySelector(".sd-add").onsubmit = add;
-    dlg.querySelector("#sd-pub").onclick = () => {
-      if (!cur || !window.dexioPublish) return;
-      const t = cur.target;
-      close();
-      window.dexioPublish(t.kind, t.path);
-    };
+    dlg.querySelector("#sd-p-go").onclick = publishNow;
+    dlg.querySelector("#sd-p-cancel").onclick = () => { publishing = false; render(cur); };
     picker(dlg.querySelector("#sd-role"), "end",
            () => ({ viewer: ROLES.viewer, editor: { ...ROLES.editor, off: !!cur && !cur.editors.room } }),
            () => role, (v) => { role = v; showRole(); });
-    picker(dlg.querySelector("#sd-public"), "start", () => ACCESS,
-           () => (cur && cur.public.on ? "on" : "off"), (v) => setPublic(v === "on"));
+    picker(dlg.querySelector("#sd-public"), "start",
+           () => ({ off: ACCESS.off, link: ACCESS.link,
+                    published: { ...ACCESS.published, off: !!cur && !cur.public.publishable } }),
+           () => (cur ? (publishing ? "published" : level(cur)) : "off"), setLevel);
   }
 
   function msg(text, bad) {
@@ -334,21 +357,93 @@
     }
 
     const pub = dlg.querySelector("#sd-public"), note = dlg.querySelector(".sd-gnote");
-    const on = d.public.on;
-    showPick(pub, ACCESS[on ? "on" : "off"]);
+    const lv = publishing && !d.public.via ? "published" : level(d);
+    showPick(pub, ACCESS[lv]);
     pub.disabled = !!d.public.via;
-    dlg.querySelector(".sd-gicon").innerHTML = on ? GLOBE : LOCK;
-    dlg.querySelector(".sd-general").classList.toggle("open", on);
-    note.textContent = d.public.via
-      ? `Public on the web, because ${d.public.via.kind === "wiki"
-          ? "the whole wiki" : "the folder " + d.public.via.path} is shared that way. Change it there.`
-      : on ? "Anyone can view it without signing in."
-           : "Only people with access can open it with the link.";
-    const row = dlg.querySelector(".sd-pubrow");
-    row.hidden = t.kind === "page" || !window.dexioPublish;
-    dlg.querySelector(".sd-pubtext").textContent = d.public.listed
-      ? "Published on dexio.wiki." : "Not on dexio.wiki.";
-    dlg.querySelector("#sd-pub").textContent = d.public.listed ? "Manage" : "Publish";
+    dlg.querySelector(".sd-gicon").innerHTML = ACCESS[lv].icon;
+    dlg.querySelector(".sd-general").classList.toggle("open", lv !== "off");
+    const via = d.public.via;
+    note.textContent = via
+      ? `${ACCESS[lv].name}, because ${via.kind === "wiki" ? "the whole wiki"
+          : "the folder " + via.path} is shared that way. Change it there.`
+      : lv === "published" ? (d.public.listed
+          ? "Anyone can find it on dexio.wiki, read it and make a copy."
+          : "Give it a name and a line on what it is, then Publish.")
+      : lv === "link" ? "Anyone with the link can view it without signing in."
+      : "Only people with access can open it with the link.";
+    showPublish(d, lv === "published" && !via);
+  }
+
+  // Which level of General access a target is at: published (listed), anyone with
+  // the link (public, not listed) or restricted; inherited from a wider share.
+  function level(d) {
+    if (d.public.via) return d.public.via.listed ? "published" : "link";
+    if (d.public.listed) return "published";
+    return d.public.on ? "link" : "off";
+  }
+
+  // The form under Published on dexio.wiki: the picture of its graph, its name and
+  // description, and who it is by (the workspace's publisher name, which an owner
+  // gives it here the first time). Read once per target from /publish.
+  async function showPublish(d, show) {
+    const sec = dlg.querySelector(".sd-publish");
+    if (!show) { sec.hidden = true; return; }
+    const key = d.target.kind + ":" + d.target.path;
+    if (!pstate || pstate.key !== key) {
+      sec.hidden = true;
+      try {
+        pstate = { key, ...(await call("GET", "publish", { kind: d.target.kind, path: d.target.path })) };
+      } catch (err) {
+        msg(err.message, true);
+        return;
+      }
+      if (cur !== d) return;                  // another target opened meanwhile
+      fillPublish(pstate);
+    }
+    sec.hidden = false;
+    const go = dlg.querySelector("#sd-p-go");
+    go.textContent = d.public.listed ? "Save" : "Publish";
+    // Once published, Save is a quiet button: Done stays the dialog's main one.
+    go.className = d.public.listed ? "sd-quiet" : "sd-primary";
+    dlg.querySelector("#sd-p-cancel").hidden = !!d.public.listed;
+  }
+
+  function fillPublish(s) {
+    const l = s.listing || {};
+    for (const [id, k] of [["#sd-p-title", "title"], ["#sd-p-desc", "description"]]) {
+      const f = dlg.querySelector(id);
+      f.value = l[k] || "";
+      f.maxLength = (l.limits || {})[k] || 300;
+    }
+    const img = dlg.querySelector(".sd-publish .pd-shot img");
+    const src = url("publish/preview.svg", { kind: s.target.kind, path: s.target.path, v: s.version });
+    if (img.getAttribute("src") !== src) img.src = src;
+    dlg.querySelector(".sd-publish .pd-size").textContent =
+      `${Number(s.pages || 0).toLocaleString()} page${s.pages === 1 ? "" : "s"}`;
+    const naming = !l.publisher && l.can_name_publisher;
+    dlg.querySelector(".sd-publish .pd-pubname").hidden = !naming;
+    const by = dlg.querySelector(".sd-publish .pd-by");
+    by.replaceChildren();
+    if (l.publisher) {
+      const a = el("a", "", l.publisher);
+      a.href = `https://dexio.wiki/wikis/${l.publisher_slug}/`;
+      a.target = "_blank"; a.rel = "noopener";
+      by.append("By ", a, ", this workspace's publisher name.");
+    } else if (naming) {
+      by.append("Letters, numbers and hyphens, no spaces. Everything this workspace publishes " +
+                "shows as by this name, which no other workspace can use.");
+    } else {
+      by.append("This workspace needs a publisher name before it can publish. Ask an owner to " +
+                "set one in Settings, General.");
+    }
+    dlg.querySelector("#sd-p-go").disabled = !l.publisher && !naming;
+    pmsg("");
+  }
+
+  function pmsg(text, bad) {
+    const m = dlg.querySelector("#sd-p-msg");
+    m.textContent = text || "";
+    m.classList.toggle("bad", !!bad);
   }
 
   // Opened for a page or a folder, the wider scopes are a click away: the
@@ -378,6 +473,8 @@
     if (dlg.hidden) back = document.activeElement;   // not the dialog's own link
     for (const m of menus) m.close(false);
     cur = null;
+    publishing = false;
+    pstate = null;
     opening = kind;
     role = "viewer";
     msg("");
@@ -442,19 +539,63 @@
     }
   }
 
-  async function setPublic(on) {
+  async function setLevel(v) {
     if (!cur || busy) return;
-    const wasListed = !!cur.public.listed;
+    const was = level(cur), t = cur.target;
+    if (v === "published") {               // the form; nothing changes until Publish
+      publishing = true;
+      render(cur);
+      setTimeout(() => { const f = dlg.querySelector("#sd-p-title"); if (f) f.focus(); }, 0);
+      return;
+    }
+    publishing = false;
+    if (v === was) { render(cur); return; }
     busy = true;
     try {
-      render(await call("POST", "share/public", null,
-                        { kind: cur.target.kind, path: cur.target.path, on }));
-      msg(on ? "It is public now: anyone can view it without signing in."
-             : "Only people with access can open it now." +
-               (wasListed ? " It is no longer on dexio.wiki." : ""));
+      if (v === "off") {
+        render(await call("POST", "share/public", null, { kind: t.kind, path: t.path, on: false }));
+        msg("Only people with access can open it now." +
+            (was === "published" ? " It is no longer on dexio.wiki." : ""));
+      } else {
+        if (was === "published") {
+          await call("POST", "publish", null, { kind: t.kind, path: t.path, on: false });
+        } else {
+          await call("POST", "share/public", null, { kind: t.kind, path: t.path, on: true });
+        }
+        render(await call("GET", "share", { kind: t.kind, path: t.path }));
+        msg(was === "published" ? "Taken off dexio.wiki. Anyone with the link can still view it."
+                                : "Anyone with the link can view it now, without signing in.");
+      }
     } catch (err) {
       msg(err.message, true);
       render(cur);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function publishNow() {
+    if (!cur || busy || !pstate) return;
+    const t = cur.target, was = !!cur.public.listed;
+    busy = true;
+    pmsg(was ? "Saving…" : "Publishing…");
+    try {
+      const body = { kind: t.kind, path: t.path, on: true,
+                     title: dlg.querySelector("#sd-p-title").value,
+                     description: dlg.querySelector("#sd-p-desc").value };
+      if (!dlg.querySelector(".sd-publish .pd-pubname").hidden) {
+        body.publisher = dlg.querySelector("#sd-p-publisher").value;
+      }
+      const s = await call("POST", "publish", null, body);
+      pstate = { key: t.kind + ":" + t.path, ...s };
+      publishing = false;
+      render(await call("GET", "share", { kind: t.kind, path: t.path }));
+      fillPublish(pstate);
+      msg("");
+      pmsg(was ? "Saved. dexio.wiki shows the new details within a few minutes."
+               : "Published. It shows among the public wikis on dexio.wiki now.");
+    } catch (err) {
+      pmsg(err.message, true);
     } finally {
       busy = false;
     }

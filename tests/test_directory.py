@@ -406,14 +406,20 @@ def test_the_publish_picture_is_for_members(app):
     assert browser(app).get(f"/api/v1/publish?w={handle}&kind=wiki").status_code == 401
 
 
-def test_the_header_has_publish_for_members_only(app):
+def test_publishing_is_a_level_of_general_access(app):
+    """Forrest, 2026-10-01: back into Share, as "Restricted, Anyone with the link,
+    Published on dexio.wiki"; no Publish button of its own."""
     c, _tok, handle = owner(app)
     page = c.get(f"/w/{handle}", headers=HTML).text
-    assert 'id="publish-wiki"' in page and "window.dexioPublish = open" in page
-    assert page.index('id="publish-wiki"') < page.index('id="share-wiki"')
-    public(c, handle, "wiki", "")
-    guest = browser(app).get(f"/w/{handle}", headers=HTML).text
-    assert 'id="publish-wiki"' not in guest and "window.dexioPublish" not in guest
+    assert 'id="publish-wiki"' not in page and "dexioPublish" not in page
+    assert "Anyone with the link" in page and "Published on dexio.wiki" in page
+    d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
+    assert d["public"]["publishable"] is True and d["public"]["listed"] is False
+    assert c.get(f"/api/v1/share?w={handle}&kind=page&path=notes/plan"
+                 ).json()["public"]["publishable"] is False
+    publish(c, handle, "folder", "notes", on=True, title="Notes")
+    d = c.get(f"/api/v1/share?w={handle}&kind=page&path=notes/plan").json()
+    assert d["public"]["on"] and d["public"]["via"]["listed"] is True      # published via the folder
 
 
 def test_publishing_needs_a_unique_publisher_name(app):
