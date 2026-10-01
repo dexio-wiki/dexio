@@ -582,8 +582,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
         on = f.get("on") in (True, "1", "true", "on", 1)
         try:
             shares.set_listed(conn, ws["id"], kind, path, on, by=user["id"],
-                              title=f.get("title"), description=f.get("description"),
-                              author=f.get("author"))
+                              title=f.get("title"), description=f.get("description"))
         except shares.ShareError as e:
             raise HTTPException(400, str(e)) from None
         return share_dialog(ws, user, kind, path)
@@ -606,8 +605,9 @@ def get_app(db_path: str | None = None) -> FastAPI:
         kind, path = str(f.get("kind") or ""), str(f.get("path") or "")
         on = f.get("on") in (True, "1", "true", "on", 1)
         try:
+            # No author: it is the name on the account (shares.author_of).
             shares.publish(conn, ws["id"], kind, path, on, user["id"], title=f.get("title"),
-                           description=f.get("description"), author=f.get("author"))
+                           description=f.get("description"))
             return shares.publish_state(conn, ws["id"], kind, path, user["id"])
         except shares.ShareError as e:
             raise HTTPException(400, str(e)) from None

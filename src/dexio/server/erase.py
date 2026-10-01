@@ -104,6 +104,7 @@ def delete_account(conn, user_id: int, store=None, on_seats=None) -> dict:
         # What was shared with the account goes with it; what it shared stays.
         conn.execute("DELETE FROM shares WHERE user_id=?", (user_id,))
         conn.execute("UPDATE shares SET created_by=NULL WHERE created_by=?", (user_id,))
+        conn.execute("UPDATE shares SET listed_by=NULL WHERE listed_by=?", (user_id,))
         for table in ("identities", "password_resets", "device_logins", "oauth_tokens",
                       "oauth_codes", "signups"):
             conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))

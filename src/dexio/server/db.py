@@ -167,7 +167,8 @@ MIGRATIONS = [
     # and "show the author"); NULL falls back to the wiki's own (shares.listing).
     ("shares", "listed_title", "TEXT"),
     ("shares", "listed_description", "TEXT"),
-    ("shares", "listed_author", "TEXT"),
+    ("shares", "listed_author", "TEXT"),      # unused: the author is the account's name
+
     ("shares", "listed_by", "INTEGER"),
 ]
 

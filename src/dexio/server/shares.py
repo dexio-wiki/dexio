@@ -389,7 +389,7 @@ def _own_public(conn, ws_id: int, kind: str, path: str):
                         (ws_id, kind, path)).fetchone()
 
 
-TITLE_MAX, DESCRIPTION_MAX, AUTHOR_MAX = 80, 300, 80
+TITLE_MAX, DESCRIPTION_MAX = 80, 300
 
 
 def _field(value, limit: int, what: str, required: bool) -> str | None:
@@ -405,18 +405,38 @@ def _field(value, limit: int, what: str, required: bool) -> str | None:
     return text
 
 
+NO_NAME = ("Your name shows as the author, and your account has none yet. Add it in"
+           " Settings, Profile, then publish.")
+
+
+def person_name(conn, user_id: int | None) -> str:
+    """First and last name as the account has them, or "" (never the address)."""
+    if not user_id:
+        return ""
+    row = conn.execute("SELECT first_name, last_name FROM users WHERE id=?",
+                       (user_id,)).fetchone()
+    if not row:
+        return ""
+    return " ".join(p for p in ((row["first_name"] or "").strip(),
+                                (row["last_name"] or "").strip()) if p)
+
+
 def set_listed(conn, ws_id: int, kind: str, path: str, on: bool, *, by: int | None = None,
                title=None, description=None, author=None) -> bool:
     """List a public target in the directory, or take it out. Only something
     public on its own can be listed (not a page that is public because its
-    folder is: list the folder). Listing takes the name, description and author
-    the directory shows (Forrest, 2026-10-01); one left out keeps what it was,
-    or falls back to the wiki's own (listing). Listed again later, it keeps
-    its first listing date."""
+    folder is: list the folder). Listing takes the name and description the
+    directory shows (Forrest, 2026-10-01); one left out keeps what it was, or
+    falls back to the wiki's own (listing). The author is not written: it is the
+    name on the account of whoever listed it (Forrest, 2026-10-01: "we shouldn't
+    let them freely enter the author name -- it should just be the first name last
+    name"), so `author` is ignored. Listed again later, it keeps its first
+    listing date."""
     kind, path = norm_target(conn, ws_id, kind, path)
     t = _field(title, TITLE_MAX, "a name", True)
     d = _field(description, DESCRIPTION_MAX, "a description", False)
-    a = _field(author, AUTHOR_MAX, "an author", True)
+    if on and by and not person_name(conn, by):
+        raise ShareError(NO_NAME)
     with db.LOCK, conn:
         row = _own_public(conn, ws_id, kind, path)
         if not row:
@@ -431,8 +451,8 @@ def set_listed(conn, ws_id: int, kind: str, path: str, on: bool, *, by: int | No
             "UPDATE shares SET listed_at=COALESCE(listed_at, ?), listed_by=COALESCE(?, listed_by),"
             " listed_title=COALESCE(?, listed_title),"
             " listed_description=COALESCE(?, listed_description),"
-            " listed_author=COALESCE(?, listed_author) WHERE id=?",
-            (time.time(), by, t, d, a, row["id"]))
+            " listed_author=NULL WHERE id=?",
+            (time.time(), by, t, d, row["id"]))
     return on
 
 
@@ -508,17 +528,11 @@ def _own_words(conn, ws: dict, kind: str, path: str) -> tuple[str, str]:
 
 
 def author_of(conn, user_id: int | None, ws: dict) -> str:
-    """Who a listing is by when its owner named no one: the person's name as
-    their account has it, else the workspace's name. Never an email address."""
-    if user_id:
-        row = conn.execute("SELECT first_name, last_name FROM users WHERE id=?",
-                           (user_id,)).fetchone()
-        if row:
-            name = " ".join(p for p in ((row["first_name"] or "").strip(),
-                                        (row["last_name"] or "").strip()) if p)
-            if name:
-                return name
-    return ws.get("name") or ""
+    """Who a listing is by: the first and last name on the account that listed it,
+    as the account has them now. A listing from before names were required, or
+    whose lister has since gone, falls back to the workspace's name. Never an
+    email address."""
+    return person_name(conn, user_id) or ws.get("name") or ""
 
 
 def listing_form(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
@@ -529,12 +543,16 @@ def listing_form(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
     row = _own_public(conn, ws_id, kind, path)
     row = dict(row) if row else {}
     title, about = _own_words(conn, ws, kind, path)
+    listed = bool(row.get("listed_at"))
     return {"title": row.get("listed_title") or title,
             "description": (row.get("listed_description")
                             if row.get("listed_description") is not None else about),
-            "author": row.get("listed_author") or author_of(conn, me, ws),
-            "limits": {"title": TITLE_MAX, "description": DESCRIPTION_MAX,
-                       "author": AUTHOR_MAX}}
+            # The author is the lister's account name: theirs while it is listed,
+            # else the name of whoever would list it now.
+            "author": author_of(conn, row.get("listed_by") or row.get("created_by"), ws)
+            if listed else person_name(conn, me),
+            "me": person_name(conn, me),
+            "limits": {"title": TITLE_MAX, "description": DESCRIPTION_MAX}}
 
 
 def counts(conn, ws_id: int, kind: str, path: str) -> dict:
@@ -584,13 +602,13 @@ def publish(conn, ws_id: int, kind: str, path: str, on: bool, by: int, *, title=
     if not on:
         set_listed(conn, ws_id, kind, path, False)
         return
-    # Check the fields before anything changes, so a bad name leaves it as it was.
+    # Check everything before anything changes, so a refusal leaves it as it was.
     _field(title, TITLE_MAX, "a name", True)
     _field(description, DESCRIPTION_MAX, "a description", False)
-    _field(author, AUTHOR_MAX, "an author", True)
+    if not person_name(conn, by):
+        raise ShareError(NO_NAME)
     set_public(conn, ws_id, kind, path, True, by)
-    set_listed(conn, ws_id, kind, path, True, by=by, title=title, description=description,
-               author=author)
+    set_listed(conn, ws_id, kind, path, True, by=by, title=title, description=description)
 
 
 def listing(conn, row: dict) -> dict | None:
@@ -611,8 +629,7 @@ def listing(conn, row: dict) -> dict | None:
     title = row.get("listed_title") or title
     if row.get("listed_description") is not None:
         about = row["listed_description"]
-    author = row.get("listed_author") or author_of(
-        conn, row.get("listed_by") or row.get("created_by"), ws)
+    author = author_of(conn, row.get("listed_by") or row.get("created_by"), ws)
     version = f"{int(n['n'])}.{int(n['at'] or 0)}"
     handle = ws.get("handle") or ""
     url = f"/w/{handle}" + ("/" + _quote(row["path"]) if row["kind"] == "page"

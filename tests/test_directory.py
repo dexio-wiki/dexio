@@ -265,16 +265,18 @@ def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
     d = public(c, handle, "folder", "notes")
     form = d["public"]["listing"]
     assert form["title"] == "Notes starter" and form["description"] == "Own words."
-    assert form["author"] == "owner"                         # the account's own name
-    assert form["limits"] == {"title": 80, "description": 300, "author": 80}
+    assert form["author"] == "owner" == form["me"]          # the account's own name
+    assert form["limits"] == {"title": 80, "description": 300}
     r = c.post(f"/api/v1/share/listed?w={handle}", json={
         "kind": "folder", "path": "notes", "on": True, "title": "  Research   notes ",
         "description": "How we keep\nresearch notes.", "author": "Wrenfield Roasters"})
     assert r.status_code == 200, r.text
     assert r.json()["public"]["listing"]["title"] == "Research notes"
     (e,) = entries(app)
+    # an author sent along is ignored: it is the name on the account (Forrest, 2026-10-01:
+    # "we shouldn't let them freely enter the author name")
     assert (e["title"], e["description"], e["author"]) == (
-        "Research notes", "How we keep research notes.", "Wrenfield Roasters")
+        "Research notes", "How we keep research notes.", "owner")
     # saving again changes only what was sent, and keeps the first listing date
     first = e["listed_at"]
     listed(c, handle, "folder", "notes")
@@ -283,18 +285,23 @@ def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
     c.post(f"/api/v1/share/listed?w={handle}", json={"kind": "folder", "path": "notes",
                                                      "on": True, "description": ""})
     (e,) = entries(app)
-    assert e["description"] == "" and e["author"] == "Wrenfield Roasters"
+    assert e["description"] == "" and e["author"] == "owner"
+    # the author follows the account's name
+    app.state.conn.execute("UPDATE users SET first_name='Ann', last_name='Lee' WHERE"
+                           " email='owner@example.com'")
+    app.state.conn.commit()
+    (e,) = entries(app)
+    assert e["author"] == "Ann Lee"
     # the copy page says who it is by
     other = browser(app)
     signup(other, "copier@example.com")
-    assert "by Wrenfield Roasters" in other.get(f"/copy?from={e['id']}").text
+    assert "by Ann Lee" in other.get(f"/copy?from={e['id']}").text
 
 
 def test_listing_fields_are_checked(app):
     c, _tok, handle = owner_with_wiki(app)
     public(c, handle, "wiki", "")
     for body, words in (({"title": "   "}, "Give it a name"), ({"title": "x" * 81}, "80"),
-                        ({"author": ""}, "Give it an author"),
                         ({"description": "y" * 301}, "300")):
         r = c.post(f"/api/v1/share/listed?w={handle}",
                    json={"kind": "wiki", "path": "", "on": True, **body})
@@ -347,7 +354,7 @@ def test_publish_makes_it_public_and_lists_it_in_one_step(app):
                 description="How we keep notes.", author="Wrenfield")
     assert s["published"] and s["public"] and s["own_public"] and s["share_id"]
     (e,) = entries(app)
-    assert (e["title"], e["author"], e["description"]) == ("Research notes", "Wrenfield",
+    assert (e["title"], e["author"], e["description"]) == ("Research notes", "owner",
                                                            "How we keep notes.")
     anon = browser(app)
     assert anon.get(f"/api/v1/note?w={handle}&path=notes/plan").status_code == 200
@@ -396,3 +403,20 @@ def test_the_header_has_publish_for_members_only(app):
     public(c, handle, "wiki", "")
     guest = browser(app).get(f"/w/{handle}", headers=HTML).text
     assert 'id="publish-wiki"' not in guest and "window.dexioPublish" not in guest
+
+
+def test_publishing_needs_a_name_on_the_account(app):
+    c, _tok, handle = owner_with_wiki(app)
+    conn = app.state.conn
+    conn.execute("UPDATE users SET first_name='', last_name='' WHERE email='owner@example.com'")
+    conn.commit()
+    s = c.get(f"/api/v1/publish?w={handle}&kind=wiki").json()
+    assert s["listing"]["me"] == "" and s["listing"]["author"] == ""
+    err = publish(c, handle, "wiki", "", status=400, on=True, title="All of it")
+    assert "Settings, Profile" in err["error"]
+    assert c.get(f"/api/v1/share?w={handle}&kind=wiki&path=").json()["public"]["on"] is False
+    assert entries(app) == []
+    conn.execute("UPDATE users SET first_name='Ann' WHERE email='owner@example.com'")
+    conn.commit()
+    publish(c, handle, "wiki", "", on=True, title="All of it")
+    assert [e["author"] for e in entries(app)] == ["Ann"]

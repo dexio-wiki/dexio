@@ -2,7 +2,8 @@
 // Forrest, 2026-10-01: "should we have a second button for publish, rather than lump
 // it into share?", then "yes". Publishing puts a wiki, or the folder in view, among
 // the public wikis on dexio.wiki in one step: public on its own, and listed with the
-// name, description and author the directory shows, beside a picture of its graph.
+// name and description the directory shows, beside a picture of its graph, by the
+// name on the publisher's account.
 // Unpublish takes it off the directory and leaves it public; Share makes it private.
 // Loaded for members only, after share.js, whose dialog styles it borrows.
 (function () {
@@ -52,7 +53,8 @@
       `<div class="pd-fields">` +
       `<label class="sd-lf"><span>Name</span><input id="pd-title-in" type="text" autocomplete="off"></label>` +
       `<label class="sd-lf"><span>Description</span><textarea id="pd-desc" rows="2"></textarea></label>` +
-      `<label class="sd-lf"><span>Author</span><input id="pd-author" type="text" autocomplete="off"></label>` +
+      // The author is the name on the account (Forrest, 2026-10-01), not typed in.
+      `<p class="pd-by"></p>` +
       `</div>` +
       `<p class="sd-msg" id="pd-msg" role="status" aria-live="polite"></p>` +
       `<div class="sd-foot"><button class="sd-quiet" type="button" id="pd-unpublish" hidden>Unpublish</button>` +
@@ -117,13 +119,24 @@
     dlg.querySelector(".pd-size").textContent = plural(d.pages, "page");
     if (fill) {
       const l = d.listing || {};
-      for (const [id, key] of [["#pd-title-in", "title"], ["#pd-desc", "description"],
-                               ["#pd-author", "author"]]) {
+      for (const [id, key] of [["#pd-title-in", "title"], ["#pd-desc", "description"]]) {
         const f = dlg.querySelector(id);
         f.value = l[key] || "";
         f.maxLength = (l.limits || {})[key] || 300;
       }
     }
+    const by = dlg.querySelector(".pd-by"), l = d.listing || {};
+    by.replaceChildren();
+    const profile = el("a", "", l.me ? "Change it" : "Add your name");
+    profile.href = "/settings/profile";
+    if (l.me) {
+      by.append("By ", el("b", "", l.author || l.me), ", the name on your account" +
+        (d.published && l.author && l.author !== l.me ? "; saving makes it yours. " : ". "), profile);
+    } else {
+      by.append("Your name shows as the author, and your account has none yet. ", profile,
+                " in Settings, Profile, then publish.");
+    }
+    dlg.querySelector("#pd-go").disabled = !l.me;
     dlg.querySelector("#pd-unpublish").hidden = !d.published;
     dlg.querySelector("#pd-go").textContent = d.published ? "Save" : "Publish";
   }
@@ -168,7 +181,6 @@
       if (on) {
         body.title = dlg.querySelector("#pd-title-in").value;
         body.description = dlg.querySelector("#pd-desc").value;
-        body.author = dlg.querySelector("#pd-author").value;
       }
       render(await call("POST", "publish", null, body), !on);
       msg(!on ? "Taken off dexio.wiki. It is still public to anyone with the link; Share can make it private."
