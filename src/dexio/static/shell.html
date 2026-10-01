@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script>document.documentElement.classList.add("js")</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#ffffff">
@@ -1560,6 +1561,21 @@ __THEME_HEAD__
     #panel .page-loading { animation: page-loading-in 0s linear .15s both; }
     #panel .page-loading .sk { animation: none; }
   }
+
+  /* A public page's text and links, rendered on the server (server/ssr.py), for
+     readers and crawlers that run no JavaScript. The head's first script sets
+     html.js before anything draws, so with JavaScript this never shows and the
+     app shows the same page in its panel. Without it, the app (which cannot run)
+     is hidden and the page scrolls like a document. */
+  html.js #ssr { display: none; }
+  html:not(.js), html:not(.js) body { height: auto; overflow: auto; }
+  html:not(.js) #wrap { display: none; }
+  #ssr { width: 100%; max-width: 760px; margin: 0 auto; padding: 28px 22px 72px;
+         background: var(--bg); }
+  #ssr h1 { font: 600 32px/1.2 var(--serif); margin: .3em 0 .6em; }
+  #ssr .ssr-crumbs { margin: 0; font-size: 13px; color: var(--muted); }
+  #ssr nav h2 { font-size: 20px; }
+  #ssr nav li span { color: var(--muted); }
 </style>
 </head>
 <body>

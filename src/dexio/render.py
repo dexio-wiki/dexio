@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -851,7 +852,7 @@ def server_page(api_base: str, title: str = "Dexio",
                 empty: bool = False, first_page: str = "", connected: bool = False,
                 ask_name: bool = False, guest: dict | None = None,
                 shared: list[dict] | None = None, can_share: bool = False,
-                seo: dict | None = None) -> str:
+                seo: dict | None = None, ssr: str = "") -> str:
     """The graph view of the current workspace's wiki.
     guest: set when the reader is not a member and sees what the workspace shares
     (shares.py): {role, signed_in, home, name, handle, next}. The header then
@@ -862,6 +863,8 @@ def server_page(api_base: str, title: str = "Dexio",
     can_share: the reader is a member, so the Share buttons show.
     seo: for a page anyone may read, {url, title, description, site}: its canonical
     address, description and link previews, for search engines and chat apps.
+    ssr: that page's text and links as HTML (server/ssr.py), shown only to readers
+    without JavaScript; the app hides it at once.
     clients: the AIs an empty wiki's connect flow offers, [{id, name, tile}], tile
     being the inside of its button (ais.tile).
     first_page: the message that has an agent save the wiki's first page (pages.TRY_IT).
@@ -944,6 +947,13 @@ def server_page(api_base: str, title: str = "Dexio",
         shell = shell.replace('<div id="wrap">', '<div id="wrap" class="onboarding">', 1)
     if guest:
         shell = shell.replace("<body>", '<body class="guest">', 1)
+    # One pass, so nothing a page supplies (its title, description or text) is
+    # itself scanned for a placeholder: a page titled "__INIT__" once would have
+    # pulled the app's script into the <title>.
+    fills = {"TITLE": html.escape(title), "BRAND": brand, "PROJECT_PICKER": picker,
+             "ACCOUNT": menu_html, "BOOTSTRAP": bootstrap, "GRAPH_JS": js, "INIT": init}
+    out = re.sub(r"__(TITLE|BRAND|PROJECT_PICKER|ACCOUNT|BOOTSTRAP|GRAPH_JS|INIT)__",
+                 lambda m: fills[m.group(1)], shell)
     if seo:
         e = lambda s: esc(str(s or ""), quote=True)  # noqa: E731
         meta = (f'\n<meta name="description" content="{e(seo["description"])}">'
@@ -954,12 +964,9 @@ def server_page(api_base: str, title: str = "Dexio",
                 f'\n<meta property="og:url" content="{e(seo["url"])}">'
                 f'\n<meta property="og:site_name" content="{e(seo.get("site"))}">'
                 f'\n<meta name="twitter:card" content="summary">')
-        shell = shell.replace("</title>", "</title>" + meta, 1)
-    return (shell
-            .replace("__TITLE__", html.escape(title))
-            .replace("__BRAND__", brand)
-            .replace("__PROJECT_PICKER__", picker)
-            .replace("__ACCOUNT__", menu_html)
-            .replace("__BOOTSTRAP__", bootstrap)
-            .replace("__GRAPH_JS__", js)
-            .replace("__INIT__", init))
+        out = out.replace("</title>", "</title>" + meta, 1)
+    if ssr:
+        # Between the header and the app, so a reader without JavaScript gets the
+        # header's Sign in and Make a copy above the text.
+        out = out.replace("</header>\n", "</header>\n" + ssr + "\n", 1)
+    return out

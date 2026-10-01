@@ -18,7 +18,9 @@ dependencies = []
 
 [project.optional-dependencies]
 server = ["fastapi>=0.115", "uvicorn[standard]>=0.30", "mcp>=2.2,<3", "boto3>=1.34",
-          "psycopg[binary]>=3.2", "psycopg-pool>=3.2", "pypdf>=5.0"]
+          "psycopg[binary]>=3.2", "psycopg-pool>=3.2", "pypdf>=5.0",
+          # Public pages' text in the HTML for crawlers that run no JavaScript (server/ssr.py).
+          "markdown-it-py>=3.0"]
 # pgserver runs a throwaway local Postgres, so the tests need no database installed.
 # pgserver has no Linux ARM wheel: there the tests use DEXIO_TEST_PG_URL (a real server).
 dev = ["pytest>=8.0", "httpx>=0.27",

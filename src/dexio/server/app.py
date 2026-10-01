@@ -8,6 +8,7 @@ account. Since 2026-09-28 a workspace has exactly one wiki (db.WIKI, keyed
 from __future__ import annotations
 
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
@@ -18,12 +19,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from .. import VERSION, ais, themes
 from ..render import server_page
 from . import (auth, billing, copies, db, device, erase, files, mail, membership, oauth,
-               pages, preview, shares, signups, social)
+               pages, preview, shares, signups, social, ssr)
 from . import desktop as desktop_signin
 from . import history as page_history
 from .ratelimit import Limiter, client_ip
 
 API = "/api/v1"
+log = logging.getLogger("dexio.server")
 WS_COOKIE = "dexio_ws"
 # Set on the redirect after a new account, read once by /joined (note_signup).
 JOINED_COOKIE = "dexio_joined"
@@ -637,6 +639,8 @@ def get_app(db_path: str | None = None) -> FastAPI:
         for it in items:
             for key in ("url", "copy_url", "preview_url"):
                 it[key] = issuer + it[key]
+            for p in it.get("page_links", []):
+                p["url"] = issuer + p["url"]
         return JSONResponse({"wikis": items}, headers={
             "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300"})
 
@@ -2157,11 +2161,27 @@ def get_app(db_path: str | None = None) -> FastAPI:
             else:
                 about = f"{ws['name']}, a wiki on Dexio."
             seo = {"url": url, "title": title, "description": about, "site": ws["name"]}
+        # The page's text and links in the HTML, for readers and crawlers that run no
+        # JavaScript (server/ssr.py; Forrest, 2026-10-01). Links reach only what anyone
+        # may read. An enhancement: if it fails, the page still loads without it.
+        rendered = ""
+        if public:
+            try:
+                key = db.wiki_key(ws["id"])
+                if row:
+                    rendered = ssr.page_article(conn, key, ws["handle"], ws["name"], row,
+                                                anyone.sees)
+                else:
+                    rendered = ssr.list_article(conn, key, ws["handle"], ws["name"],
+                                                request.query_params.get("folder", ""),
+                                                anyone.sees)
+            except Exception:  # noqa: BLE001
+                log.exception("server-rendered text failed for %s %r", ws["handle"], page)
         response = HTMLResponse(server_page(
             API, title=title, workspaces=mine,
             current=mine[0]["id"] if mine else None, account=account, connected=True,
             guest=guest, shared=shares.shared_with(conn, user["id"]) if user else [],
-            seo=seo))
+            seo=seo, ssr=rendered))
         if not public:
             # Shared with chosen people only: not for search engines.
             response.headers["X-Robots-Tag"] = "noindex, nofollow"

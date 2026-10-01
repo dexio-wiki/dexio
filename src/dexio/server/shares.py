@@ -558,6 +558,9 @@ def reached(conn, ws_id: int, kind: str, path: str) -> list:
     return conn.execute(cols + " AND path=?", (k, path)).fetchall()
 
 
+# At most this many pages of one listing are named in the directory (page_links).
+LISTED_PAGE_LINKS = 200
+
 # A listed wiki or folder introduces itself with its front page, if it has one.
 FRONT_PAGES = ("index", "README", "readme", "Readme", "home", "Home", "overview", "Overview")
 
@@ -707,6 +710,13 @@ def listing(conn, row: dict) -> dict | None:
                             else "?folder=" + _quote(row["path"]) if row["kind"] == "folder"
                             else "")
     publisher = publisher_of(conn, ws["id"])
+    # Each page by name and address, so dexio.wiki can link every published page in
+    # plain HTML, which crawlers follow without running the app (Forrest, 2026-10-01).
+    page_links = [{"path": p["path"], "title": p["title"] or p["path"].rsplit("/", 1)[-1],
+                   "url": f"/w/{handle}/" + _quote(p["path"])}
+                  for p in conn.execute("SELECT path, title FROM pages WHERE project=?" + where
+                                        + " ORDER BY path LIMIT ?",
+                                        (k, *args, LISTED_PAGE_LINKS)).fetchall()]
     return {"id": row["id"], "kind": row["kind"], "path": row["path"], "title": title,
             "description": about, "author": author,
             # The publisher's handle and its page's slug; empty for a listing from
@@ -717,7 +727,7 @@ def listing(conn, row: dict) -> dict | None:
             "updated_at": float(n["at"] or 0), "listed_at": row["listed_at"],
             "url": url, "copy_url": f"/copy?from={row['id']}",
             "preview_url": f"/api/v1/directory/{row['id']}/preview.svg?v={version}",
-            "version": version}
+            "version": version, "page_links": page_links}
 
 
 def directory(conn, limit: int = 500) -> list[dict]:
