@@ -18,6 +18,11 @@ SHARE_ICON = ('<svg class="share-icon" viewBox="0 0 16 16" aria-hidden="true">'
               '<path d="M1.6 13.6c.5-2.5 2.3-3.9 4.6-3.9s4.1 1.4 4.6 3.9M12.6 4.6v4.4M10.4 6.8h4.4">'
               '</path></svg>')
 
+# The Publish button's icon: an arrow up out of a tray, as publishing reads.
+PUBLISH_ICON = ('<svg class="share-icon" viewBox="0 0 16 16" aria-hidden="true">'
+                '<path d="M8 10.2V2.6M5.1 5.4 8 2.5l2.9 2.9M2.8 9.6v2.6c0 .7.5 1.2 1.2 1.2h8c.7 0'
+                ' 1.2-.5 1.2-1.2V9.6"></path></svg>')
+
 # Header wordmark height in px: sits inside the 34px controls row.
 BRAND_HEIGHT = 20
 
@@ -920,7 +925,11 @@ def server_page(api_base: str, title: str = "Dexio",
                                  acct.get("first", ""), acct.get("last", ""), ws_name,
                                  bool(ws and ws.get("role") == "owner"))
         if can_share:
-            menu_html = (f'<button id="share-wiki" class="hbtn" type="button"'
+            # Publish (Forrest, 2026-10-01): its own button, left of Share.
+            menu_html = (f'<button id="publish-wiki" class="hbtn" type="button"'
+                         f' title="Publish on dexio.wiki">{PUBLISH_ICON}<span>Publish</span>'
+                         f'</button>'
+                         f'<button id="share-wiki" class="hbtn" type="button"'
                          f' title="Share the wiki">{SHARE_ICON}<span>Share</span></button>'
                          + menu_html)
     bootstrap = (f'window.DEXIO_API = {json.dumps(api_base)};'
@@ -937,6 +946,7 @@ def server_page(api_base: str, title: str = "Dexio",
     init = ais.STEPS_JS + APP_JS + WS_MENU_JS + ACCOUNT_JS
     if can_share and not guest:
         init += (STATIC / "share.js").read_text(encoding="utf-8")
+        init += (STATIC / "publish.js").read_text(encoding="utf-8")
     shell = shell.replace("</style>", WS_MENU_CSS + ais.CSS + "</style>", 1)
     if (empty or ask_name) and not guest:
         shell = shell.replace('<div id="wrap">', '<div id="wrap" class="onboarding">', 1)

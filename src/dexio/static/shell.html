@@ -1185,10 +1185,11 @@ __THEME_HEAD__
   header .hbtn-primary:hover { background: var(--btn-hover); border-color: transparent; }
   header .hbtn svg { width: 16px; height: 16px; fill: none; stroke: currentColor;
                      stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-  @media (max-width: 520px) { header #share-wiki span { display: none; }
-                              header #share-wiki { padding: 0 9px; }
+  @media (max-width: 520px) { header #share-wiki span, header #publish-wiki span { display: none; }
+                              header #share-wiki, header #publish-wiki { padding: 0 9px; }
                               /* one row on a phone: the logo, the workspace, Try Dexio free */
-                              header .guest-tag, header .hbtn:not(.hbtn-primary):not(#share-wiki) {
+                              header .guest-tag,
+                              header .hbtn:not(.hbtn-primary):not(#share-wiki):not(#publish-wiki) {
                                 display: none; }
                               header .hbtn-primary { margin-left: auto; } }
   /* What a guest opened: the sharing workspace's name, then View only. */
@@ -1305,10 +1306,10 @@ __THEME_HEAD__
      "Share the folder x or the whole wiki instead" (share.js, scope). */
   .sd-scope { margin: -10px 0 14px; color: var(--muted); font-size: 13px; }
   .sd-scope[hidden] { display: none; }
-  .sd-scope .sd-link { display: inline; height: auto; min-height: 0; padding: 0; border: 0;
+  .sd-scope .sd-link, .sd-pubrow .sd-link { display: inline; height: auto; min-height: 0; padding: 0; border: 0;
                        background: none; color: var(--link); font: inherit; font-weight: 400;
                        cursor: pointer; }
-  .sd-scope .sd-link:hover { text-decoration: underline; }
+  .sd-scope .sd-link:hover, .sd-pubrow .sd-link:hover { text-decoration: underline; }
   .sd-label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12.5px;
               font-weight: 600; }
   .sd-row { display: flex; gap: 8px; }
@@ -1420,26 +1421,36 @@ __THEME_HEAD__
   .sd-general.open .sd-gicon { background: color-mix(in srgb, var(--accent) 18%, transparent);
                                color: var(--accent); }
   .sd-gnote { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
-  /* List on dexio.wiki, under General access, lined up with its text. */
-  .sd-list { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 0 42px;
-             cursor: pointer; }
-  .sd-list[hidden] { display: none; }
-  .sd-list input { flex: none; width: 16px; height: 16px; min-height: 0; margin: 2px 0 0;
-                   accent-color: var(--accent); cursor: pointer; }
-  .sd-list-text { display: flex; flex-direction: column; gap: 2px; }
-  .sd-list-name { font-size: 13.5px; font-weight: 600; }
-  .sd-list-desc { color: var(--muted); font-size: 12.5px; }
-  .sd-listing { margin: 10px 0 0 68px; display: flex; flex-direction: column; gap: 8px; }
-  .sd-listing[hidden] { display: none; }
+  /* Share's line on whether it is published, under General access. */
+  .sd-pubrow { margin: 12px 0 0 42px; color: var(--muted); font-size: 12.5px; }
+  .sd-pubrow[hidden] { display: none; }
+  /* Publish (publish.js): the share dialog's box and fields, a picture of the graph. */
   .sd-lf { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--muted); }
   .sd-lf input, .sd-lf textarea { width: 100%; min-height: 34px; padding: 6px 10px; font: inherit;
     font-size: 14px; color: var(--text); background: var(--field, var(--panel));
     border: 1px solid var(--line); border-radius: 6px; resize: vertical; }
   .sd-lf input:focus, .sd-lf textarea:focus { outline: none; border-color: var(--accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
-  .sd-listing .sd-hint { margin: 0; }
-  .sd-lactions { display: flex; justify-content: flex-end; }
-  @media (max-width: 480px) { .sd-listing { margin-left: 0; } }
+  .pd-scope { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 12px; }
+  .pd-scope[hidden] { display: none; }
+  .pd-pill { min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px;
+    background: var(--panel); color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+  .pd-pill[aria-checked="true"] { border-color: var(--accent); color: var(--accent); font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+  .pd-status { margin: 0 0 10px; font-size: 13px; color: var(--text); }
+  .pd-status[hidden] { display: none; }
+  .pd-status a { color: var(--accent); }
+  .pd-shot { position: relative; margin: 0 0 12px; border: 1px solid var(--line); border-radius: 8px;
+    overflow: hidden; background: var(--panel); aspect-ratio: 16 / 9; }
+  .pd-shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .pd-size { position: absolute; right: 8px; bottom: 6px; padding: 1px 8px; border-radius: 999px;
+    background: color-mix(in srgb, var(--panel) 90%, transparent); color: var(--muted);
+    font-size: 12px; }
+  .pd-fields { display: flex; flex-direction: column; gap: 8px; }
+  .pd-box .sd-foot { align-items: center; }
+  .pd-gap { flex: 1; }
+  /* the dialog's buttons set display, which would show one marked hidden */
+  .pd-box button[hidden] { display: none; }
   .sd-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 22px; }
   @media (max-width: 480px) {
     .sd-box { padding: 18px 16px 14px; }

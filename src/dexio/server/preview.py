@@ -37,10 +37,10 @@ def _seed(text: str) -> float:
     return int(hashlib.sha1(text.encode("utf-8")).hexdigest()[:8], 16) / 0xFFFFFFFF
 
 
-def _graph(conn, share: dict) -> dict:
+def _graph(conn, ws_id: int, kind: str, path: str) -> dict:
     from .copies import access_of
-    return shares.restrict_graph(db.graph(conn, db.wiki_key(share["workspace_id"])),
-                                 access_of(share))
+    return shares.restrict_graph(db.graph(conn, db.wiki_key(ws_id)), access_of(
+        {"workspace_id": ws_id, "kind": kind, "path": path}))
 
 
 def layout(nodes: list[dict], links: list[dict]) -> dict[str, tuple[float, float]]:
@@ -162,11 +162,17 @@ def render(nodes: list[dict], links: list[dict]) -> str:
 
 def svg(conn, share: dict, version: str) -> str:
     """The picture for a listed share, drawn once per version."""
-    key = (share["id"], version)
+    return picture(conn, share["workspace_id"], share["kind"], share["path"], version)
+
+
+def picture(conn, ws_id: int, kind: str, path: str, version: str) -> str:
+    """The picture of what a wiki, folder or page reaches, drawn once per version:
+    the directory's cards, and the Publish dialog before anything is published."""
+    key = (int(ws_id), kind, path, version)
     if key in _cache:
         _cache.move_to_end(key)
         return _cache[key]
-    g = _graph(conn, share)
+    g = _graph(conn, ws_id, kind, path)
     out = render(g["nodes"], g["links"])
     _cache[key] = out
     while len(_cache) > CACHE_SIZE:

@@ -326,3 +326,73 @@ def test_a_listing_shows_a_picture_of_its_graph(app):
     # nothing unlisted has a picture
     listed(c, handle, "folder", "notes", on=False)
     assert browser(app).get(f"/api/v1/directory/{e['id']}/preview.svg").status_code == 404
+
+
+# ---- Publish: its own button and dialog (Forrest, 2026-10-01: "should we have a
+# second button for publish, rather than lump it into share?", "yes") -------------
+def publish(c, handle, kind, path, status=200, **body):
+    r = c.post(f"/api/v1/publish?w={handle}", json={"kind": kind, "path": path, **body})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def test_publish_makes_it_public_and_lists_it_in_one_step(app):
+    c, tok, handle = owner_with_wiki(app)
+    mcp(app, tok, "write_page", path="notes/index", text="# Notes starter\n\nOwn words.\n")
+    s = c.get(f"/api/v1/publish?w={handle}&kind=folder&path=notes").json()
+    assert s["published"] is False and s["public"] is False and s["pages"] == 3
+    assert s["listing"]["title"] == "Notes starter" and s["listing"]["author"] == "owner"
+    assert s["version"].startswith("3.")
+    s = publish(c, handle, "folder", "notes", on=True, title="Research notes",
+                description="How we keep notes.", author="Wrenfield")
+    assert s["published"] and s["public"] and s["own_public"] and s["share_id"]
+    (e,) = entries(app)
+    assert (e["title"], e["author"], e["description"]) == ("Research notes", "Wrenfield",
+                                                           "How we keep notes.")
+    anon = browser(app)
+    assert anon.get(f"/api/v1/note?w={handle}&path=notes/plan").status_code == 200
+    # the Share dialog knows
+    d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
+    assert d["public"]["on"] and d["public"]["listed"]
+    # unpublish: off the directory, still public
+    s = publish(c, handle, "folder", "notes", on=False)
+    assert s["published"] is False and s["public"] is True
+    assert entries(app) == []
+    assert anon.get(f"/api/v1/note?w={handle}&path=notes/plan").status_code == 200
+
+
+def test_publish_takes_a_wiki_or_a_folder_and_a_bad_name_changes_nothing(app):
+    c, _tok, handle = owner_with_wiki(app)
+    r = c.get(f"/api/v1/publish?w={handle}&kind=page&path=index")
+    assert r.status_code == 400 and "whole wiki or a folder" in r.json()["error"]
+    publish(c, handle, "page", "index", status=400, on=True, title="x", author="y")
+    err = publish(c, handle, "wiki", "", status=400, on=True, title=" ", author="Me")
+    assert "Give it a name" in err["error"]
+    assert c.get(f"/api/v1/share?w={handle}&kind=wiki&path=").json()["public"]["on"] is False
+    assert entries(app) == []
+    # a public folder's wiki can be published as well: the whole wiki gets its own row
+    public(c, handle, "folder", "notes")
+    s = publish(c, handle, "wiki", "", on=True, title="All of it", author="Me")
+    assert s["published"] and s["own_public"]
+    assert [x["title"] for x in entries(app)] == ["All of it"]
+
+
+def test_the_publish_picture_is_for_members(app):
+    c, _tok, handle = owner_with_wiki(app)
+    r = c.get(f"/api/v1/publish/preview.svg?w={handle}&kind=folder&path=notes&v=1")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
+    assert r.text.count("<circle") == 2 and "private" in r.headers["cache-control"]
+    other = browser(app)
+    signup(other, "stranger@example.com")
+    assert other.get(f"/api/v1/publish/preview.svg?w={handle}&kind=wiki").status_code == 403
+    assert browser(app).get(f"/api/v1/publish?w={handle}&kind=wiki").status_code == 401
+
+
+def test_the_header_has_publish_for_members_only(app):
+    c, _tok, handle = owner_with_wiki(app)
+    page = c.get(f"/w/{handle}", headers=HTML).text
+    assert 'id="publish-wiki"' in page and "window.dexioPublish = open" in page
+    assert page.index('id="publish-wiki"') < page.index('id="share-wiki"')
+    public(c, handle, "wiki", "")
+    guest = browser(app).get(f"/w/{handle}", headers=HTML).text
+    assert 'id="publish-wiki"' not in guest and "window.dexioPublish" not in guest

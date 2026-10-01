@@ -537,6 +537,62 @@ def listing_form(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
                        "author": AUTHOR_MAX}}
 
 
+def counts(conn, ws_id: int, kind: str, path: str) -> dict:
+    """Pages and words a target reaches now, and its version (page count and last
+    change), which names a picture of it (preview.py)."""
+    where, args = _scope(kind, path)
+    n = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(words), 0) AS words,"
+                     " COALESCE(MAX(updated_at), 0) AS at FROM pages WHERE project=?" + where,
+                     (db.wiki_key(ws_id), *args)).fetchone()
+    pages = int(n["n"] or 0) if n else 0
+    at = int(n["at"] or 0) if n else 0
+    return {"pages": pages, "words": int(n["words"] or 0) if n else 0, "version": f"{pages}.{at}"}
+
+
+# Publish (Forrest, 2026-10-01: "should we have a second button for publish, rather
+# than lump it into share?", then "yes"): its own button and dialog. Publishing a
+# wiki or folder makes it public on its own and lists it, in one step, with the
+# name, description and author the directory shows. Unpublishing takes it off the
+# directory and leaves it public; Share is where it becomes private again.
+PUBLISHABLE = ("wiki", "folder")
+
+
+def publish_state(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
+    """Everything the Publish dialog shows for a wiki or folder."""
+    kind, path = norm_target(conn, ws_id, kind, path)
+    if kind not in PUBLISHABLE:
+        raise ShareError("Publish the whole wiki or a folder.")
+    row = _own_public(conn, ws_id, kind, path)
+    pub_rows = [r for r in conn.execute(
+        "SELECT kind, path FROM shares WHERE workspace_id=? AND email IS NULL AND"
+        " user_id IS NULL", (ws_id,)).fetchall() if covers(r["kind"], r["path"], kind, path)]
+    return {"target": {"kind": kind, "path": path, "title": title_of(conn, ws_id, kind, path)},
+            **counts(conn, ws_id, kind, path),
+            "published": bool(row and row["listed_at"]),
+            "public": bool(pub_rows), "own_public": bool(row),
+            "listing": listing_form(conn, ws_id, kind, path, me),
+            "share_id": row["id"] if row and row["listed_at"] else None}
+
+
+def publish(conn, ws_id: int, kind: str, path: str, on: bool, by: int, *, title=None,
+            description=None, author=None) -> None:
+    """Publish a wiki or folder (public on its own, and listed), or unpublish it
+    (off the directory; still public)."""
+    kind, path = norm_target(conn, ws_id, kind, path)
+    if kind not in PUBLISHABLE:
+        raise ShareError("Publish the whole wiki or a folder.")
+    if not on:
+        set_listed(conn, ws_id, kind, path, False)
+        return
+    # Check the fields before anything changes, so a bad name leaves it as it was.
+    _field(title, TITLE_MAX, "a name", True)
+    _field(description, DESCRIPTION_MAX, "a description", False)
+    _field(author, AUTHOR_MAX, "an author", True)
+    set_public(conn, ws_id, kind, path, True, by)
+    set_listed(conn, ws_id, kind, path, True, by=by, title=title, description=description,
+               author=author)
+
+
 def listing(conn, row: dict) -> dict | None:
     """What the directory says about one listed share: its name, description and
     author (as its owner wrote them, else the wiki's own), its size and its

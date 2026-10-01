@@ -588,6 +588,45 @@ def get_app(db_path: str | None = None) -> FastAPI:
             raise HTTPException(400, str(e)) from None
         return share_dialog(ws, user, kind, path)
 
+    @app.get(f"{API}/publish")
+    def publish_get(request: Request, kind: str = Query(...), path: str = Query(default="")):
+        """What the Publish dialog shows for a wiki or folder (shares.publish_state)."""
+        user, ws = sharer(request)
+        try:
+            return shares.publish_state(conn, ws["id"], kind, path, user["id"])
+        except shares.ShareError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.post(f"{API}/publish")
+    async def publish_post(request: Request):
+        """Publish a wiki or folder on dexio.wiki (public, listed, with its name,
+        description and author), or unpublish it."""
+        user, ws = sharer(request)
+        f = await share_body(request)
+        kind, path = str(f.get("kind") or ""), str(f.get("path") or "")
+        on = f.get("on") in (True, "1", "true", "on", 1)
+        try:
+            shares.publish(conn, ws["id"], kind, path, on, user["id"], title=f.get("title"),
+                           description=f.get("description"), author=f.get("author"))
+            return shares.publish_state(conn, ws["id"], kind, path, user["id"])
+        except shares.ShareError as e:
+            raise HTTPException(400, str(e)) from None
+
+    @app.get(f"{API}/publish/preview.svg")
+    def publish_preview(request: Request, kind: str = Query(...), path: str = Query(default="")):
+        """The picture the directory would show, for the Publish dialog: members only,
+        since nothing may be public yet."""
+        _user, ws = sharer(request)
+        try:
+            kind, path = shares.norm_target(conn, ws["id"], kind, path)
+        except shares.ShareError as e:
+            raise HTTPException(404, str(e)) from None
+        v = shares.counts(conn, ws["id"], kind, path)["version"]
+        return Response(preview.picture(conn, ws["id"], kind, path, v),
+                        media_type="image/svg+xml",
+                        headers={"Cache-Control": "private, max-age=60",
+                                 "X-Content-Type-Options": "nosniff"})
+
     # ---- the directory on dexio.wiki, and making a copy (copies.py) ----------
     @app.get(f"{API}/directory")
     def directory():

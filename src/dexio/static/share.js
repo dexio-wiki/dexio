@@ -68,7 +68,6 @@
           desc: () => "Anyone can view it without signing in" },
   };
   let role = "viewer", opening = "wiki";   // opening: the kind being loaded
-  let listingOpen = false;                 // the listing fields, ticked open, not yet listed
 
   function initials(name) {
     const parts = String(name || "?").replace(/@.*/, "").split(/[\s._-]+/).filter(Boolean);
@@ -209,23 +208,11 @@
       `<button type="button" id="sd-public" class="sd-pick sd-access-pick" data-label="General access">` +
       `<span class="sd-pick-now">Restricted</span>${CHEV}</button>` +
       `<p class="sd-gnote"></p></div></div>` +
-      // The directory on dexio.wiki (Forrest, 2026-10-01: "users opt in to publish
-      // their wiki to the dexio website when they share publically"). Only for
-      // something public on its own; off until its owner ticks it.
-      `<label class="sd-list" hidden><input type="checkbox" id="sd-listed">` +
-      `<span class="sd-list-text"><span class="sd-list-name">List on dexio.wiki</span>` +
-      `<span class="sd-list-desc">Anyone can find it in the public wikis on dexio.wiki and ` +
-      `make a copy of it in their own workspace.</span></span></label>` +
-      // What the listing says (Forrest, 2026-10-01: "when they publish a wiki, we should
-      // allow them to give it a name and description", and "show the author"). Opens
-      // when the box is ticked; nothing is listed until List it is clicked.
-      `<div class="sd-listing" hidden>` +
-      `<label class="sd-lf"><span>Name</span><input id="sd-l-title" type="text" autocomplete="off"></label>` +
-      `<label class="sd-lf"><span>Description</span><textarea id="sd-l-desc" rows="2"></textarea></label>` +
-      `<label class="sd-lf"><span>Author</span><input id="sd-l-author" type="text" autocomplete="off"></label>` +
-      `<p class="sd-hint">These show with it on dexio.wiki, with a picture of its graph.</p>` +
-      `<div class="sd-lactions"><button class="sd-primary" type="button" id="sd-l-save">List it</button></div>` +
-      `</div>` +
+      // Publishing has its own button and dialog (publish.js; Forrest, 2026-10-01:
+      // "should we have a second button for publish, rather than lump it into
+      // share?", "yes"). Share says whether it is published and opens Publish.
+      `<p class="sd-pubrow" hidden><span class="sd-pubtext"></span> ` +
+      `<button type="button" class="sd-link" id="sd-pub">Publish</button></p>` +
       `<div class="sd-foot"><button class="sd-quiet sd-copy" type="button">Copy link</button>` +
       `<button class="sd-primary sd-done" type="button">Done</button></div></div>`;
     document.body.append(dlg);
@@ -248,24 +235,12 @@
     dlg.querySelector(".sd-done").onclick = close;
     dlg.querySelector(".sd-copy").onclick = copy;
     dlg.querySelector(".sd-add").onsubmit = add;
-    dlg.querySelector("#sd-listed").onchange = (e) => {
-      if (!cur) return;
-      if (e.target.checked) {                 // open the fields; List it lists it
-        listingOpen = true;
-        render(cur);
-        dlg.querySelector("#sd-l-title").focus();
-      } else if (cur.public.listed) {
-        setListed(false);
-      } else {
-        listingOpen = false;
-        render(cur);
-      }
+    dlg.querySelector("#sd-pub").onclick = () => {
+      if (!cur || !window.dexioPublish) return;
+      const t = cur.target;
+      close();
+      window.dexioPublish(t.kind, t.path);
     };
-    dlg.querySelector("#sd-l-save").onclick = () => setListed(true, {
-      title: dlg.querySelector("#sd-l-title").value,
-      description: dlg.querySelector("#sd-l-desc").value,
-      author: dlg.querySelector("#sd-l-author").value,
-    });
     picker(dlg.querySelector("#sd-role"), "end",
            () => ({ viewer: ROLES.viewer, editor: { ...ROLES.editor, off: !!cur && !cur.editors.room } }),
            () => role, (v) => { role = v; showRole(); });
@@ -369,22 +344,11 @@
           ? "the whole wiki" : "the folder " + d.public.via.path} is shared that way. Change it there.`
       : on ? "Anyone can view it without signing in."
            : "Only people with access can open it with the link.";
-    const own = on && d.public.own, listed = !!d.public.listed;
-    dlg.querySelector(".sd-list").hidden = !own;
-    dlg.querySelector("#sd-listed").checked = listed || listingOpen;
-    const form = dlg.querySelector(".sd-listing"), show = own && (listed || listingOpen);
-    // Filled when the fields come into view, so a re-render never undoes typing.
-    if (show && form.hidden && d.public.listing) {
-      const l = d.public.listing;
-      for (const [id, key] of [["#sd-l-title", "title"], ["#sd-l-desc", "description"],
-                               ["#sd-l-author", "author"]]) {
-        const field = dlg.querySelector(id);
-        field.value = l[key] || "";
-        field.maxLength = (l.limits || {})[key] || 300;
-      }
-    }
-    form.hidden = !show;
-    dlg.querySelector("#sd-l-save").textContent = listed ? "Save" : "List it";
+    const row = dlg.querySelector(".sd-pubrow");
+    row.hidden = t.kind === "page" || !window.dexioPublish;
+    dlg.querySelector(".sd-pubtext").textContent = d.public.listed
+      ? "Published on dexio.wiki." : "Not on dexio.wiki.";
+    dlg.querySelector("#sd-pub").textContent = d.public.listed ? "Manage" : "Publish";
   }
 
   // Opened for a page or a folder, the wider scopes are a click away: the
@@ -414,8 +378,6 @@
     if (dlg.hidden) back = document.activeElement;   // not the dialog's own link
     for (const m of menus) m.close(false);
     cur = null;
-    listingOpen = false;
-    dlg.querySelector(".sd-listing").hidden = true;
     opening = kind;
     role = "viewer";
     msg("");
@@ -489,28 +451,7 @@
                         { kind: cur.target.kind, path: cur.target.path, on }));
       msg(on ? "It is public now: anyone can view it without signing in."
              : "Only people with access can open it now." +
-               (wasListed ? " It is no longer listed on dexio.wiki." : ""));
-    } catch (err) {
-      msg(err.message, true);
-      render(cur);
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function setListed(on, fields) {
-    if (!cur || busy) return;
-    const was = !!cur.public.listed;
-    busy = true;
-    try {
-      const d = await call("POST", "share/listed", null,
-                           { kind: cur.target.kind, path: cur.target.path, on, ...(fields || {}) });
-      listingOpen = false;
-      if (!on) dlg.querySelector(".sd-listing").hidden = true;   // filled afresh next time
-      render(d);
-      msg(!on ? "Taken off dexio.wiki. It is still public to anyone with the link."
-          : was ? "Saved. dexio.wiki shows the new details within a few minutes."
-          : "Listed on dexio.wiki: anyone can find it there and make a copy.");
+               (wasListed ? " It is no longer on dexio.wiki." : ""));
     } catch (err) {
       msg(err.message, true);
       render(cur);
