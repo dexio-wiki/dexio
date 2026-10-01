@@ -208,7 +208,6 @@
     dlg.innerHTML =
       `<div class="sd-box" role="dialog" aria-modal="true" aria-labelledby="sd-title">` +
       `<h2 id="sd-title"></h2><p class="sd-what"></p>` +
-      `<p class="sd-scope" hidden></p>` +
       `<form class="sd-add" novalidate>` +
       `<label class="sd-label" for="sd-email">Add people</label>` +
       `<div class="sd-row"><input id="sd-email" type="email" autocomplete="email" ` +
@@ -318,7 +317,6 @@
     const t = d.target;
     dlg.querySelector("#sd-title").textContent = `Share “${t.title}”`;
     dlg.querySelector(".sd-what").textContent = what(t);
-    scope(t);
     // Editors are members: the whole wiki only, owners only, room on the plan.
     // With no room, Editor is greyed out in the menu and says why there.
     if (!d.editors.allowed || !d.editors.room) role = "viewer";
@@ -446,27 +444,10 @@
     m.classList.toggle("bad", !!bad);
   }
 
-  // Opened for a page or a folder, the wider scopes are a click away: the
-  // folder drilled into (for a page inside it), then the whole wiki.
-  function scope(t) {
-    const p = dlg.querySelector(".sd-scope");
-    p.replaceChildren();
-    p.hidden = t.kind === "wiki";
-    if (p.hidden) return;
-    const f = window.dexio && window.dexio.focused && window.dexio.focused();
-    const link = (text, kind, path) => {
-      const b = el("button", "sd-link", text);
-      b.type = "button";
-      b.onclick = () => open(kind, path);
-      return b;
-    };
-    if (t.kind === "page" && f && t.path.startsWith(f + "/")) {
-      p.append("Share ", link(`the folder ${f}`, "folder", f), " or ",
-               link("the whole wiki", "wiki", ""), " instead");
-    } else {
-      p.append(link("Share the whole wiki instead", "wiki", ""));
-    }
-  }
+  // The dialog shares what Share was pressed on (the page open, else the folder in
+  // view, else the whole wiki), and offers nothing wider: the line that did ("Share
+  // the whole wiki instead") went on 2026-10-01 (Forrest: "can we get rid of this
+  // button in the share modal?").
 
   async function open(kind, path) {
     if (!dlg) build();

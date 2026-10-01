@@ -98,7 +98,8 @@ def test_the_headers_share_shares_the_folder_drilled_into():
     """"the Share should be aware of which folder is currently active"."""
     share = (STATIC / "share.js").read_text(encoding="utf-8")
     assert "window.dexio.shareTarget()" in share and "open(t.kind, t.path);" in share
-    assert "Share the whole wiki instead" in share
+    # and offers nothing wider (Forrest, 2026-10-01: "can we get rid of this button")
+    assert "Share the whole wiki instead" not in share and "sd-scope" not in share
     assert "window.dexio.focused = () => state.focus;" in JS
     assert "window.dexio.shareTarget = shareTarget;" in JS
     assert 'if (state.focus) return { kind: "folder", path: state.focus' in body("shareTarget")
@@ -119,10 +120,9 @@ def test_one_share_on_the_screen_and_it_shares_the_open_page():
     assert "`Share the page ${t.title}`" in body("shareHere")
     assert 'panel.classList.add("open");\n    shareHere();' in body("showPage")
     assert 'panel.classList.remove("open"); placeGrip(); shareHere(); return;' in body("select")
-    # a page in the folder drilled into offers that folder, then the wiki
-    s = share.split("function scope(", 1)[1].split("\n  }\n", 1)[0]
-    assert 't.kind === "page" && f && t.path.startsWith(f + "/")' in s
-    assert 'link(`the folder ${f}`, "folder", f)' in s and 'link("the whole wiki", "wiki", "")' in s
+    # the dialog offers no wider scope (Forrest, 2026-10-01: "can we get rid of this
+    # button in the share modal? 'Share the whole wiki instead'")
+    assert "function scope(" not in share and "the whole wiki\", \" instead" not in share
 
 
 def test_the_folder_rides_in_the_address_and_back_undoes_it():
