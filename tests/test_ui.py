@@ -347,6 +347,10 @@ def test_mobile_breakpoint_turns_the_panel_into_a_sheet():
     mobile = css.split("@media (max-width: 720px)")[1]
     assert "translateY(100%)" in mobile, "panel should slide up from the bottom"
     assert "max-width: none" in mobile, "a 420px drawer does not fit a 390px screen"
+    sheet = mobile.split("#panel {", 1)[1].split("}", 1)[0]
+    # all the height below the header (Forrest, 2026-10-01), not 72dvh
+    assert "top: 0;" in sheet and "height: 100%;" in sheet
+    assert "dvh" not in sheet
 
 
 def test_phone_sheet_drag_follows_the_finger_and_never_fights_the_scroll():

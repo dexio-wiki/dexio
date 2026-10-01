@@ -1527,12 +1527,16 @@ __THEME_HEAD__
     #find { order: 10; flex: 1 1 100%; max-width: none; }
     #search { font-size: 16px; }   /* 16px: iOS zooms into smaller fields */
 
-    /* the side panel becomes a bottom sheet: a 420px drawer is unusable at 390px wide */
+    /* the side panel becomes a sheet: a 420px drawer is unusable at 390px
+       wide. It fills the screen below the header; it was 72dvh with the
+       graph showing above it (Forrest, 2026-10-01: "On mobile can we have
+       the wiki page take up the full height of the screen?"). It stops at
+       the header rather than covering it: Share for the open page and
+       search live there, and nowhere else. */
     #panel {
-      top: auto; bottom: 0; right: 0; left: 0;
-      width: 100%; min-width: 0; max-width: none; height: 72dvh;
-      border-left: 0; border-top: 1px solid var(--line);
-      border-radius: 14px 14px 0 0;
+      top: 0; bottom: 0; right: 0; left: 0;
+      width: 100%; min-width: 0; max-width: none; height: 100%;
+      border-left: 0;
       padding: 0 16px max(16px, env(safe-area-inset-bottom));
       transform: translateY(100%);
     }
