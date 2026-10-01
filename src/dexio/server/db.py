@@ -240,6 +240,7 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_publisher"
                      " ON workspaces(publisher_key)")
         conn.commit()
+    upgrade_publishers(conn)
     compact_history(conn)
     return conn
 
@@ -281,6 +282,45 @@ def give_handles(conn) -> None:
                          (_unused_handle(conn), r["id"]))
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_handle ON workspaces(handle)")
         conn.commit()
+
+
+# A workspace's publisher name on dexio.wiki is a handle, as a GitHub name is
+# (Forrest, 2026-10-01: "should we allow spaces in the publisher name?", then yes to
+# no spaces): letters, numbers and single hyphens, 2 to 39 characters, starting and
+# ending with a letter or number. It is shown as typed and names the publisher's
+# page, dexio.wiki/wikis/<name in lowercase>. Two names are the same publisher when
+# they match without case or hyphens (Wrenfield-Roasters and wrenfieldroasters), so
+# a look-alike cannot be taken; publisher_key holds that form, unique by index.
+PUBLISHER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){1,38}$")
+
+
+def publisher_key(name: str) -> str:
+    return str(name or "").replace("-", "").lower()
+
+
+def upgrade_publishers(conn) -> None:
+    """Bring publisher names written under the first rule (spaces allowed, the
+    same day) to the handle rule: spaces and punctuation become hyphens; a name
+    that still does not fit, or now matches an earlier one, is cleared for its
+    owner to choose again. Does nothing once every name fits."""
+    with LOCK:
+        rows = conn.execute("SELECT id, publisher_name, publisher_key FROM workspaces"
+                            " WHERE publisher_name IS NOT NULL ORDER BY id").fetchall()
+        if all(PUBLISHER_RE.match(r["publisher_name"] or "")
+               and r["publisher_key"] == publisher_key(r["publisher_name"]) for r in rows):
+            return
+        with conn:
+            conn.execute("UPDATE workspaces SET publisher_key=NULL WHERE publisher_key IS NOT NULL")
+            seen: set[str] = set()
+            for r in rows:
+                name = re.sub(r"[^A-Za-z0-9]+", "-", r["publisher_name"] or "").strip("-")
+                key = publisher_key(name)
+                if not PUBLISHER_RE.match(name) or key in seen:
+                    conn.execute("UPDATE workspaces SET publisher_name=NULL WHERE id=?", (r["id"],))
+                    continue
+                seen.add(key)
+                conn.execute("UPDATE workspaces SET publisher_name=?, publisher_key=? WHERE id=?",
+                             (name, key, r["id"]))
 
 
 def handle_of(conn, workspace_id: int) -> str:

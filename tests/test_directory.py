@@ -20,7 +20,7 @@ from test_workspaces import app, browser, mcp, signup, token_from_connect, ws_id
 HTML = {"accept": "text/html"}
 
 
-def owner(app, email="owner@example.com", publisher="Owner Co"):
+def owner(app, email="owner@example.com", publisher="owner-co"):
     """owner_with_wiki, with the workspace's publisher name set in Settings, General
     (publishing needs one; Forrest, 2026-10-01)."""
     c, tok, handle = owner_with_wiki(app, email)
@@ -275,8 +275,9 @@ def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
     d = public(c, handle, "folder", "notes")
     form = d["public"]["listing"]
     assert form["title"] == "Notes starter" and form["description"] == "Own words."
-    assert form["publisher"] == "Owner Co" and form["can_name_publisher"] is True
-    assert form["limits"] == {"title": 80, "description": 300, "publisher": 40}
+    assert form["publisher"] == "owner-co" and form["can_name_publisher"] is True
+    assert form["limits"] == {"title": 80, "description": 300, "publisher": 39}
+    assert form["publisher_slug"] == "owner-co"
     r = c.post(f"/api/v1/share/listed?w={handle}", json={
         "kind": "folder", "path": "notes", "on": True, "title": "  Research   notes ",
         "description": "How we keep\nresearch notes.", "author": "Wrenfield Roasters"})
@@ -286,7 +287,7 @@ def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
     # an author sent along is ignored: it is the workspace's publisher name (Forrest,
     # 2026-10-01: not typed in, then a unique workspace setting)
     assert (e["title"], e["description"], e["author"]) == (
-        "Research notes", "How we keep research notes.", "Owner Co")
+        "Research notes", "How we keep research notes.", "owner-co")
     # saving again changes only what was sent, and keeps the first listing date
     first = e["listed_at"]
     listed(c, handle, "folder", "notes")
@@ -295,16 +296,17 @@ def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
     c.post(f"/api/v1/share/listed?w={handle}", json={"kind": "folder", "path": "notes",
                                                      "on": True, "description": ""})
     (e,) = entries(app)
-    assert e["description"] == "" and e["author"] == "Owner Co"
+    assert e["description"] == "" and e["author"] == "owner-co"
     # renaming the publisher shows on what is published
-    r = c.post(f"/settings/publisher?w={handle}", data={"publisher": "Ann Lee Notes"})
+    r = c.post(f"/settings/publisher?w={handle}", data={"publisher": "AnnLeeNotes"})
     assert r.status_code == 303
     (e,) = entries(app)
-    assert e["author"] == "Ann Lee Notes"
+    assert (e["author"], e["publisher"], e["publisher_slug"]) == ("AnnLeeNotes", "AnnLeeNotes",
+                                                                  "annleenotes")
     # the copy page says who it is by
     other = browser(app)
     signup(other, "copier@example.com")
-    assert "by Ann Lee Notes" in other.get(f"/copy?from={e['id']}").text
+    assert "by AnnLeeNotes" in other.get(f"/copy?from={e['id']}").text
 
 
 def test_listing_fields_are_checked(app):
@@ -319,7 +321,7 @@ def test_listing_fields_are_checked(app):
     # with no author given, it is the lister's name; never their address
     listed(c, handle, "wiki", "")
     (e,) = entries(app)
-    assert e["author"] == "Owner Co"
+    assert e["author"] == "owner-co"
 
 
 def test_a_listing_shows_a_picture_of_its_graph(app):
@@ -357,13 +359,13 @@ def test_publish_makes_it_public_and_lists_it_in_one_step(app):
     mcp(app, tok, "write_page", path="notes/index", text="# Notes starter\n\nOwn words.\n")
     s = c.get(f"/api/v1/publish?w={handle}&kind=folder&path=notes").json()
     assert s["published"] is False and s["public"] is False and s["pages"] == 3
-    assert s["listing"]["title"] == "Notes starter" and s["listing"]["publisher"] == "Owner Co"
+    assert s["listing"]["title"] == "Notes starter" and s["listing"]["publisher"] == "owner-co"
     assert s["version"].startswith("3.")
     s = publish(c, handle, "folder", "notes", on=True, title="Research notes",
                 description="How we keep notes.", author="Wrenfield")
     assert s["published"] and s["public"] and s["own_public"] and s["share_id"]
     (e,) = entries(app)
-    assert (e["title"], e["author"], e["description"]) == ("Research notes", "Owner Co",
+    assert (e["title"], e["author"], e["description"]) == ("Research notes", "owner-co",
                                                            "How we keep notes.")
     anon = browser(app)
     assert anon.get(f"/api/v1/note?w={handle}&path=notes/plan").status_code == 200
@@ -421,31 +423,55 @@ def test_publishing_needs_a_unique_publisher_name(app):
     err = publish(c, handle, "wiki", "", status=400, on=True, title="All of it")
     assert "publisher name" in err["error"]
     assert c.get(f"/api/v1/share?w={handle}&kind=wiki&path=").json()["public"]["on"] is False
-    # the first time, the Publish dialog names it
-    s1 = publish(c, handle, "wiki", "", on=True, title="All of it", publisher="  Ann   Lee Notes ")
-    assert s1["published"] and s1["listing"]["publisher"] == "Ann Lee Notes"
-    assert [e["author"] for e in entries(app)] == ["Ann Lee Notes"]
+    # the first time, the Publish dialog names it; a space is refused, not mended
+    err = publish(c, handle, "wiki", "", status=400, on=True, title="All of it",
+                  publisher="Ann Lee")
+    assert "No spaces" in err["error"]
+    s1 = publish(c, handle, "wiki", "", on=True, title="All of it", publisher="  Ann-Lee ")
+    assert s1["published"] and s1["listing"]["publisher"] == "Ann-Lee"
+    assert s1["listing"]["publisher_slug"] == "ann-lee"
+    (e,) = entries(app)
+    assert (e["author"], e["publisher_slug"]) == ("Ann-Lee", "ann-lee")
     page = c.get(f"/settings?w={handle}").text
-    assert 'id="publisher-name"' in page and 'value="Ann Lee Notes"' in page
-    # no other workspace can have it, in any case or spacing
+    assert 'id="publisher-name"' in page and 'value="Ann-Lee"' in page
+    assert "dexio.wiki/wikis/ann-lee/" in page
+    # no other workspace can have it, in any case, with or without hyphens
     c2, _t2, h2 = owner(app, "second@example.com", publisher=None)
-    r = c2.post(f"/settings/publisher?w={h2}", data={"publisher": "ann lee  NOTES"})
-    assert r.status_code == 400 and "Another workspace publishes as" in r.text
-    err = publish(c2, h2, "wiki", "", status=400, on=True, title="Mine", publisher="ANN LEE NOTES")
+    for name in ("annlee", "ANN-LEE", "a-n-n-l-e-e"):
+        r = c2.post(f"/settings/publisher?w={h2}", data={"publisher": name})
+        assert r.status_code == 400 and "Another workspace publishes as" in r.text, name
+    err = publish(c2, h2, "wiki", "", status=400, on=True, title="Mine", publisher="AnnLee")
     assert "Another workspace" in err["error"]
     assert c2.get(f"/api/v1/share?w={h2}&kind=wiki&path=").json()["public"]["on"] is False
-    # names that pass for Dexio are kept for Dexio's own workspaces
-    for name in ("Dexio", "dexio  team", "Support"):
+    # names that pass for Dexio, or for a page of the site, are kept
+    for name in ("Dexio", "dexio-team", "Support", "wikis", "DexioHQ"):
         r = c2.post(f"/settings/publisher?w={h2}", data={"publisher": name})
         assert r.status_code == 400 and "kept for Dexio" in r.text, name
-    for name in ("x", "y" * 41, "-dash first", "a<b>"):
+    for name in ("x", "y" * 40, "-dash", "trailing-", "a--b", "a<b>", "under_score", "dot.name",
+                 "two words"):
         r = c2.post(f"/settings/publisher?w={h2}", data={"publisher": name})
         assert r.status_code == 400, name
-    assert c2.post(f"/settings/publisher?w={h2}", data={"publisher": "Second Co"}).status_code == 303
+    assert c2.post(f"/settings/publisher?w={h2}", data={"publisher": "second-co"}).status_code == 303
     # renaming frees the old name
-    c.post(f"/settings/publisher?w={handle}", data={"publisher": "Ann Lee"})
-    assert c2.post(f"/settings/publisher?w={h2}",
-                   data={"publisher": "Ann Lee Notes"}).status_code == 303
+    c.post(f"/settings/publisher?w={handle}", data={"publisher": "ann-lee-2"})
+    assert c2.post(f"/settings/publisher?w={h2}", data={"publisher": "AnnLee"}).status_code == 303
+
+
+def test_names_from_the_first_rule_become_handles(app):
+    from dexio.server import db
+    c, _tok, handle = owner(app, publisher=None)
+    c2, _t2, h2 = owner(app, "second@example.com", publisher=None)
+    conn = app.state.conn
+    conn.execute("UPDATE workspaces SET publisher_name='Old Name & Co.', publisher_key='old name & co.'"
+                 " WHERE handle=?", (handle,))
+    conn.execute("UPDATE workspaces SET publisher_name='old  name co', publisher_key='old  name co'"
+                 " WHERE handle=?", (h2,))
+    conn.commit()
+    db.upgrade_publishers(conn)
+    assert shares.publisher_of(conn, ws_id(app, handle)) == "Old-Name-Co"
+    assert shares.publisher_of(conn, ws_id(app, h2)) == ""       # the same name: chosen again
+    db.upgrade_publishers(conn)                                   # and again changes nothing
+    assert shares.publisher_of(conn, ws_id(app, handle)) == "Old-Name-Co"
 
 
 def test_dexio_may_use_its_own_name(app, monkeypatch):

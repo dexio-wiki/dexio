@@ -817,15 +817,20 @@ def _general(ws: dict, owner: bool, billing: dict, leave_blocker: str, delete_bl
 
     # Who this workspace publishes as on dexio.wiki (shares.set_publisher).
     pub = ws.get("publisher_name") or ""
-    about = ("Everything this workspace publishes shows on dexio.wiki as by this name. No other"
+    about = ("Everything this workspace publishes shows on dexio.wiki as by this name, and"
+             " lists on its own page there. Letters, numbers and hyphens, no spaces; no other"
              " workspace can use it.")
+    if pub:
+        page = f"https://dexio.wiki/wikis/{pub.lower()}/"
+        about += f" Its page: <a href='{e(page)}'>{e(page.replace('https://', ''))}</a>."
     if owner:
         publisher = f"""<form method="post" action="/settings/publisher{_in(ws)}" class="row plain">
         <div style="flex:1"><label for="publisher">Publisher name</label>
-        <input id="publisher" name="publisher" value="{e(pub)}" minlength="2" maxlength="40"
-          placeholder="Your company or your own name" required></div>
+        <input id="publisher" name="publisher" value="{e(pub)}" minlength="2" maxlength="39"
+          pattern="[A-Za-z0-9]+(-[A-Za-z0-9]+)*" placeholder="wrenfield-roasters"
+          autocapitalize="off" spellcheck="false" required></div>
         <button type="submit">Save</button></form>
-        <p class="muted">{about}</p>"""
+        <p class="muted">{about}</p>"""   # about is built from escaped parts
     else:
         publisher = ((f'<p class="who"><b>{e(pub)}</b></p>' if pub else
                       '<p class="who">None yet.</p>')

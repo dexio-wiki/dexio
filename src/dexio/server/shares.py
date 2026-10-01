@@ -409,15 +409,16 @@ def _field(value, limit: int, what: str, required: bool) -> str | None:
 # Forrest, 2026-10-01: "Can we actually have a publisher name field in the settings?
 # I'd imagine that it would be a workspace setting", then "It should also be
 # unique". What a workspace publishes shows on dexio.wiki as by its publisher name
-# (it replaced the lister's own name the same day). Owners set it under Settings,
-# General, or in the Publish dialog the first time; no two workspaces can have the
-# same one, compared without case or extra spaces. Names that would pass for Dexio
-# itself are kept for Dexio's own workspaces.
-PUBLISHER_MIN, PUBLISHER_MAX = 2, 40
-_PUBLISHER_OK = re.compile(r"^[\w][\w .&'-]*$")
-RESERVED_PUBLISHERS = {"dexio", "dexio wiki", "dexio.wiki", "dexio team", "dexio official",
-                       "dexio support", "admin", "administrator", "support", "staff",
-                       "moderator", "official"}
+# (it replaced the lister's own name the same day), which is a handle with a page of
+# its own there (db.PUBLISHER_RE: no spaces, the same day). Owners set it under
+# Settings, General, or in the Publish dialog the first time; no two workspaces can
+# have the same one (db.publisher_key). Names that would pass for Dexio itself, or
+# for a page of the site, are kept for Dexio's own workspaces.
+PUBLISHER_MIN, PUBLISHER_MAX = 2, 39
+RESERVED_PUBLISHERS = {"dexio", "dexiowiki", "dexioteam", "dexioofficial", "dexiosupport",
+                       "dexiohq", "admin", "administrator", "support", "staff", "moderator",
+                       "official", "help", "api", "wikis", "templates", "new", "about",
+                       "settings", "search", "explore"}
 NO_PUBLISHER = ("This workspace needs a publisher name before it can publish. An owner sets"
                 " it in Settings, General.")
 
@@ -431,7 +432,12 @@ def official_workspaces() -> set[str]:
 
 
 def publisher_key(name: str) -> str:
-    return " ".join(str(name or "").split()).casefold()
+    return db.publisher_key(name)
+
+
+def publisher_slug(name: str) -> str:
+    """The publisher's page on dexio.wiki: /wikis/<this>/."""
+    return str(name or "").lower()
 
 
 def publisher_of(conn, ws_id: int) -> str:
@@ -442,12 +448,15 @@ def publisher_of(conn, ws_id: int) -> str:
 def set_publisher(conn, ws_id: int, name) -> str:
     """Give a workspace its publisher name. ShareError says why one cannot be had:
     its length or characters, reserved, or another workspace has it."""
-    text = " ".join(str(name or "").split())
+    text = str(name or "").strip()
+    if any(ch.isspace() for ch in text):
+        raise ShareError("No spaces in a publisher name: letters, numbers and hyphens, like"
+                         " wrenfield-roasters.")
     if len(text) < PUBLISHER_MIN or len(text) > PUBLISHER_MAX:
         raise ShareError(f"A publisher name is {PUBLISHER_MIN} to {PUBLISHER_MAX} characters.")
-    if not _PUBLISHER_OK.match(text):
-        raise ShareError("A publisher name can have letters, numbers, spaces and . & ' - _,"
-                         " and starts with a letter or number.")
+    if not db.PUBLISHER_RE.match(text):
+        raise ShareError("A publisher name has letters, numbers and single hyphens, and starts"
+                         " and ends with a letter or number.")
     key = publisher_key(text)
     ws = db.workspace(conn, ws_id) or {}
     if key in RESERVED_PUBLISHERS and ws.get("handle") not in official_workspaces():
@@ -593,6 +602,7 @@ def listing_form(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
             # Who it is by: the workspace's publisher name (set_publisher), which an
             # owner can give it here if it has none yet.
             "publisher": publisher_of(conn, ws_id),
+            "publisher_slug": publisher_slug(publisher_of(conn, ws_id)),
             "can_name_publisher": db.role_in(conn, ws_id, me) == "owner",
             "limits": {"title": TITLE_MAX, "description": DESCRIPTION_MAX,
                        "publisher": PUBLISHER_MAX}}
@@ -683,8 +693,13 @@ def listing(conn, row: dict) -> dict | None:
     url = f"/w/{handle}" + ("/" + _quote(row["path"]) if row["kind"] == "page"
                             else "?folder=" + _quote(row["path"]) if row["kind"] == "folder"
                             else "")
+    publisher = publisher_of(conn, ws["id"])
     return {"id": row["id"], "kind": row["kind"], "path": row["path"], "title": title,
-            "description": about, "author": author, "workspace": ws.get("name") or "",
+            "description": about, "author": author,
+            # The publisher's handle and its page's slug; empty for a listing from
+            # before publisher names, which shows the workspace's name instead.
+            "publisher": publisher, "publisher_slug": publisher_slug(publisher),
+            "workspace": ws.get("name") or "",
             "handle": handle, "pages": int(n["n"]), "words": int(n["words"] or 0),
             "updated_at": float(n["at"] or 0), "listed_at": row["listed_at"],
             "url": url, "copy_url": f"/copy?from={row['id']}",

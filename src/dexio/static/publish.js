@@ -56,8 +56,8 @@
       // Who it is by: the workspace's publisher name (Settings, General), unique on
       // Dexio (Forrest, 2026-10-01). An owner names it here the first time.
       `<label class="sd-lf pd-pubname" hidden><span>Publisher name</span>` +
-      `<input id="pd-publisher" type="text" autocomplete="organization" maxlength="40" ` +
-      `placeholder="Your company or your own name"></label>` +
+      `<input id="pd-publisher" type="text" autocomplete="off" autocapitalize="off" ` +
+      `spellcheck="false" maxlength="39" placeholder="wrenfield-roasters"></label>` +
       `<p class="pd-by"></p>` +
       `</div>` +
       `<p class="sd-msg" id="pd-msg" role="status" aria-live="polite"></p>` +
@@ -134,15 +134,19 @@
     dlg.querySelector(".pd-pubname").hidden = !naming;
     by.replaceChildren();
     if (l.publisher) {
-      by.append("By ", el("b", "", l.publisher), ", this workspace's publisher name. ");
+      const page = el("a", "", l.publisher);
+      page.href = `https://dexio.wiki/wikis/${l.publisher_slug}/`;
+      page.target = "_blank"; page.rel = "noopener";
+      by.append("By ", page, ", this workspace's publisher name. ");
       if (l.can_name_publisher) {
         const a = el("a", "", "Change it in Settings");
         a.href = `/settings?w=${encodeURIComponent(W)}#publisher-name`;
         by.append(a);
       }
     } else if (naming) {
-      by.append("Everything this workspace publishes shows as by this name. No other " +
-                "workspace can use it, and you can change it in Settings, General.");
+      by.append("Letters, numbers and hyphens, no spaces. Everything this workspace " +
+                "publishes shows as by this name, on its own page at dexio.wiki/wikis/" +
+                "<name>. No other workspace can use it; you can change it in Settings, General.");
     } else {
       by.append("This workspace needs a publisher name before it can publish. Ask an owner " +
                 "to set one in Settings, General.");
