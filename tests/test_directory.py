@@ -448,10 +448,12 @@ def test_publishing_is_a_level_of_visibility(app):
     assert "Anyone with the link" in page and "Published on dexio.wiki" in page
     # people only under Restricted, and Update applies Visibility (Forrest, 2026-10-01)
     assert 'class="sd-primary sd-update" type="button">Update</button>' in page
-    assert 'sd-done' not in page and 'class="sd-whosec"' in page and 'class="sd-members"' in page
+    assert 'sd-done' not in page and 'class="sd-whosec"' in page
+    # no "Members of ... can always edit it" line in its place (Forrest, 2026-10-01)
+    assert "sd-members" not in page and "can always edit it" not in page
     # Visibility, not General access, and above the people (Forrest, 2026-10-01)
     assert "General access" not in page
-    assert page.index('>Visibility</h3>') < page.index('class="sd-whosec"') < page.index('class="sd-members"')
+    assert page.index('>Visibility</h3>') < page.index('class="sd-whosec"')
     d = c.get(f"/api/v1/share?w={handle}&kind=folder&path=notes").json()
     assert d["public"]["publishable"] is True and d["public"]["listed"] is False
     assert c.get(f"/api/v1/share?w={handle}&kind=page&path=notes/plan"

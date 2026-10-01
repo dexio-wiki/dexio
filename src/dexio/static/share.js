@@ -244,7 +244,6 @@
       `<p class="sd-hint" id="sd-role-hint" hidden></p>` +
       `<p class="sd-msg" id="sd-msg" role="status" aria-live="polite"></p></form>` +
       `<h3 class="sd-h">People with access</h3><ul class="sd-people"></ul></div>` +
-      `<p class="sd-members" hidden></p>` +
       // Update's progress and errors, just above it.
       `<p class="sd-msg" id="sd-g-msg" role="status" aria-live="polite"></p>` +
       `<div class="sd-foot"><button class="sd-quiet sd-copy" type="button">Copy link</button>` +
@@ -378,16 +377,10 @@
       : lv === "link" ? "Anyone with the link can view it without signing in."
       : "Only people with access can open it with the link.";
     showPublish(d, lv === "published" && !via);
-    // People with access, only under Restricted; otherwise a line on who can edit.
-    const restricted = lv === "off";
-    dlg.querySelector(".sd-whosec").hidden = !restricted;
-    const members = dlg.querySelector(".sd-members");
-    members.hidden = restricted;
-    if (!restricted) {
-      const a = el("a", "", "Settings, Members");
-      a.href = `/settings/members?w=${encodeURIComponent(W)}`;
-      members.replaceChildren(`Members of ${d.workspace.name} can always edit it. Manage them in `, a, ".");
-    }
+    // People with access, only under Restricted, and no line in their place
+    // (Forrest, 2026-10-01: "I don't think we need this line in the share modal",
+    // the one on members being able to edit it).
+    dlg.querySelector(".sd-whosec").hidden = lv !== "off";
   }
 
   // The level Visibility shows: what is staged, else what it is.
