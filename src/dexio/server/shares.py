@@ -389,11 +389,34 @@ def _own_public(conn, ws_id: int, kind: str, path: str):
                         (ws_id, kind, path)).fetchone()
 
 
-def set_listed(conn, ws_id: int, kind: str, path: str, on: bool) -> bool:
+TITLE_MAX, DESCRIPTION_MAX, AUTHOR_MAX = 80, 300, 80
+
+
+def _field(value, limit: int, what: str, required: bool) -> str | None:
+    """A listing field as stored: None keeps what is there; text is trimmed to one
+    line and checked."""
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if required and not text:
+        raise ShareError(f"Give it {what}.")
+    if len(text) > limit:
+        raise ShareError(f"Keep {what} to {limit} characters.")
+    return text
+
+
+def set_listed(conn, ws_id: int, kind: str, path: str, on: bool, *, by: int | None = None,
+               title=None, description=None, author=None) -> bool:
     """List a public target in the directory, or take it out. Only something
     public on its own can be listed (not a page that is public because its
-    folder is: list the folder)."""
+    folder is: list the folder). Listing takes the name, description and author
+    the directory shows (Forrest, 2026-10-01); one left out keeps what it was,
+    or falls back to the wiki's own (listing). Listed again later, it keeps
+    its first listing date."""
     kind, path = norm_target(conn, ws_id, kind, path)
+    t = _field(title, TITLE_MAX, "a name", True)
+    d = _field(description, DESCRIPTION_MAX, "a description", False)
+    a = _field(author, AUTHOR_MAX, "an author", True)
     with db.LOCK, conn:
         row = _own_public(conn, ws_id, kind, path)
         if not row:
@@ -401,8 +424,15 @@ def set_listed(conn, ws_id: int, kind: str, path: str, on: bool) -> bool:
                 return False
             raise ShareError("Make it public on the web first. Only something public can be"
                              " listed.")
-        conn.execute("UPDATE shares SET listed_at=? WHERE id=?",
-                     (time.time() if on else None, row["id"]))
+        if not on:
+            conn.execute("UPDATE shares SET listed_at=NULL WHERE id=?", (row["id"],))
+            return False
+        conn.execute(
+            "UPDATE shares SET listed_at=COALESCE(listed_at, ?), listed_by=COALESCE(?, listed_by),"
+            " listed_title=COALESCE(?, listed_title),"
+            " listed_description=COALESCE(?, listed_description),"
+            " listed_author=COALESCE(?, listed_author) WHERE id=?",
+            (time.time(), by, t, d, a, row["id"]))
     return on
 
 
@@ -453,13 +483,67 @@ def _scope(kind: str, path: str) -> tuple[str, tuple]:
     return " AND path=?", (path,)
 
 
-def listing(conn, row: dict) -> dict | None:
-    """What the directory says about one listed share: its title, a line on what
-    it is, its size and its addresses (relative to the app). None when it
-    reaches no pages now (a folder emptied, a page deleted). Counts come from
-    the database; only the front page's text is read."""
+def _own_words(conn, ws: dict, kind: str, path: str) -> tuple[str, str]:
+    """The wiki's own name and description for a target: the workspace's name for
+    the whole wiki, else its front page's title, else its name; the front page's
+    first sentence. What a listing shows when its owner wrote none."""
     from ..parse import description_of
-    ws = db.workspace(conn, row["workspace_id"]) or {}
+    k = db.wiki_key(ws["id"])
+    if kind == "page":
+        wanted = [path]
+    else:
+        prefix = path + "/" if kind == "folder" else ""
+        wanted = [prefix + name for name in FRONT_PAGES]
+    found = {r["path"]: r for r in conn.execute(
+        f"SELECT path, title, text FROM pages WHERE project=? AND path IN"
+        f" ({','.join('?' * len(wanted))})", (k, *wanted)).fetchall()}
+    front = next((found[p] for p in wanted if p in found), None)
+    if kind == "wiki":
+        title = ws.get("name") or "A wiki"
+    elif kind == "folder":
+        title = (front["title"] if front else "") or path.rsplit("/", 1)[-1]
+    else:
+        title = (front["title"] if front else "") or path
+    return title, (description_of(front["text"] or "") if front else "")
+
+
+def author_of(conn, user_id: int | None, ws: dict) -> str:
+    """Who a listing is by when its owner named no one: the person's name as
+    their account has it, else the workspace's name. Never an email address."""
+    if user_id:
+        row = conn.execute("SELECT first_name, last_name FROM users WHERE id=?",
+                           (user_id,)).fetchone()
+        if row:
+            name = " ".join(p for p in ((row["first_name"] or "").strip(),
+                                        (row["last_name"] or "").strip()) if p)
+            if name:
+                return name
+    return ws.get("name") or ""
+
+
+def listing_form(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
+    """What the Share dialog's listing fields start with: what the owner wrote,
+    else the wiki's own name and description, and their own name as author."""
+    kind, path = norm_target(conn, ws_id, kind, path)
+    ws = db.workspace(conn, ws_id) or {"id": ws_id}
+    row = _own_public(conn, ws_id, kind, path)
+    row = dict(row) if row else {}
+    title, about = _own_words(conn, ws, kind, path)
+    return {"title": row.get("listed_title") or title,
+            "description": (row.get("listed_description")
+                            if row.get("listed_description") is not None else about),
+            "author": row.get("listed_author") or author_of(conn, me, ws),
+            "limits": {"title": TITLE_MAX, "description": DESCRIPTION_MAX,
+                       "author": AUTHOR_MAX}}
+
+
+def listing(conn, row: dict) -> dict | None:
+    """What the directory says about one listed share: its name, description and
+    author (as its owner wrote them, else the wiki's own), its size and its
+    addresses (relative to the app), and a picture of its graph (preview.py).
+    None when it reaches no pages now (a folder emptied, a page deleted). Counts
+    come from the database; only the front page's text is read."""
+    ws = db.workspace(conn, row["workspace_id"]) or {"id": row["workspace_id"]}
     k = db.wiki_key(row["workspace_id"])
     where, args = _scope(row["kind"], row["path"])
     n = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(words), 0) AS words,"
@@ -467,31 +551,24 @@ def listing(conn, row: dict) -> dict | None:
                      (k, *args)).fetchone()
     if not n or not n["n"]:
         return None
-    if row["kind"] == "page":
-        wanted = [row["path"]]
-    else:
-        prefix = row["path"] + "/" if row["kind"] == "folder" else ""
-        wanted = [prefix + name for name in FRONT_PAGES]
-    found = {r["path"]: r for r in conn.execute(
-        f"SELECT path, title, text FROM pages WHERE project=? AND path IN"
-        f" ({','.join('?' * len(wanted))})", (k, *wanted)).fetchall()}
-    front = next((found[p] for p in wanted if p in found), None)
-    if row["kind"] == "wiki":
-        title = ws.get("name") or "A wiki"
-    elif row["kind"] == "folder":
-        title = (front["title"] if front else "") or row["path"].rsplit("/", 1)[-1]
-    else:
-        title = (front["title"] if front else "") or row["path"]
-    about = description_of(front["text"] or "") if front else ""
+    title, about = _own_words(conn, ws, row["kind"], row["path"])
+    title = row.get("listed_title") or title
+    if row.get("listed_description") is not None:
+        about = row["listed_description"]
+    author = row.get("listed_author") or author_of(
+        conn, row.get("listed_by") or row.get("created_by"), ws)
+    version = f"{int(n['n'])}.{int(n['at'] or 0)}"
     handle = ws.get("handle") or ""
     url = f"/w/{handle}" + ("/" + _quote(row["path"]) if row["kind"] == "page"
                             else "?folder=" + _quote(row["path"]) if row["kind"] == "folder"
                             else "")
     return {"id": row["id"], "kind": row["kind"], "path": row["path"], "title": title,
-            "description": about, "workspace": ws.get("name") or "", "handle": handle,
-            "pages": int(n["n"]), "words": int(n["words"] or 0),
+            "description": about, "author": author, "workspace": ws.get("name") or "",
+            "handle": handle, "pages": int(n["n"]), "words": int(n["words"] or 0),
             "updated_at": float(n["at"] or 0), "listed_at": row["listed_at"],
-            "url": url, "copy_url": f"/copy?from={row['id']}"}
+            "url": url, "copy_url": f"/copy?from={row['id']}",
+            "preview_url": f"/api/v1/directory/{row['id']}/preview.svg?v={version}",
+            "version": version}
 
 
 def directory(conn, limit: int = 500) -> list[dict]:
@@ -674,6 +751,7 @@ def dialog(conn, ws_id: int, kind: str, path: str, me: int) -> dict:
         "public": {"on": own_pub or via is not None, "own": own_pub,
                    "listed": any(r["kind"] == kind and r["path"] == path and r["listed_at"]
                                  for r in pub_rows),
+                   "listing": listing_form(conn, ws_id, kind, path, me) if own_pub else None,
                    "via": None if not via else {
                        "kind": via["kind"], "path": via["path"],
                        "title": title_of(conn, ws_id, via["kind"], via["path"])}},

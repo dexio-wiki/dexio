@@ -1429,6 +1429,17 @@ __THEME_HEAD__
   .sd-list-text { display: flex; flex-direction: column; gap: 2px; }
   .sd-list-name { font-size: 13.5px; font-weight: 600; }
   .sd-list-desc { color: var(--muted); font-size: 12.5px; }
+  .sd-listing { margin: 10px 0 0 68px; display: flex; flex-direction: column; gap: 8px; }
+  .sd-listing[hidden] { display: none; }
+  .sd-lf { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--muted); }
+  .sd-lf input, .sd-lf textarea { width: 100%; min-height: 34px; padding: 6px 10px; font: inherit;
+    font-size: 14px; color: var(--text); background: var(--field, var(--panel));
+    border: 1px solid var(--line); border-radius: 6px; resize: vertical; }
+  .sd-lf input:focus, .sd-lf textarea:focus { outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent); }
+  .sd-listing .sd-hint { margin: 0; }
+  .sd-lactions { display: flex; justify-content: flex-end; }
+  @media (max-width: 480px) { .sd-listing { margin-left: 0; } }
   .sd-foot { display: flex; justify-content: space-between; gap: 8px; margin-top: 22px; }
   @media (max-width: 480px) {
     .sd-box { padding: 18px 16px 14px; }

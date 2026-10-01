@@ -254,3 +254,75 @@ def test_listing_for_prefers_the_widest(app):
     listed(c, handle, "folder", "notes")
     got = shares.listing_for(app.state.conn, ws_id(app, handle))
     assert (got["kind"], got["path"]) == ("folder", "notes")
+
+
+# ---- name, description, author and a preview (Forrest, 2026-10-01: "when they
+# publish a wiki, we should allow them to give it a name and description", "show a
+# visual preview of the wiki somehow", "we should also show the author") ----------
+def test_a_listing_has_the_name_description_and_author_its_owner_gives_it(app):
+    c, tok, handle = owner_with_wiki(app)
+    mcp(app, tok, "write_page", path="notes/index", text="# Notes starter\n\nOwn words.\n")
+    d = public(c, handle, "folder", "notes")
+    form = d["public"]["listing"]
+    assert form["title"] == "Notes starter" and form["description"] == "Own words."
+    assert form["author"] == "owner"                         # the account's own name
+    assert form["limits"] == {"title": 80, "description": 300, "author": 80}
+    r = c.post(f"/api/v1/share/listed?w={handle}", json={
+        "kind": "folder", "path": "notes", "on": True, "title": "  Research   notes ",
+        "description": "How we keep\nresearch notes.", "author": "Wrenfield Roasters"})
+    assert r.status_code == 200, r.text
+    assert r.json()["public"]["listing"]["title"] == "Research notes"
+    (e,) = entries(app)
+    assert (e["title"], e["description"], e["author"]) == (
+        "Research notes", "How we keep research notes.", "Wrenfield Roasters")
+    # saving again changes only what was sent, and keeps the first listing date
+    first = e["listed_at"]
+    listed(c, handle, "folder", "notes")
+    (e,) = entries(app)
+    assert e["title"] == "Research notes" and e["listed_at"] == first
+    c.post(f"/api/v1/share/listed?w={handle}", json={"kind": "folder", "path": "notes",
+                                                     "on": True, "description": ""})
+    (e,) = entries(app)
+    assert e["description"] == "" and e["author"] == "Wrenfield Roasters"
+    # the copy page says who it is by
+    other = browser(app)
+    signup(other, "copier@example.com")
+    assert "by Wrenfield Roasters" in other.get(f"/copy?from={e['id']}").text
+
+
+def test_listing_fields_are_checked(app):
+    c, _tok, handle = owner_with_wiki(app)
+    public(c, handle, "wiki", "")
+    for body, words in (({"title": "   "}, "Give it a name"), ({"title": "x" * 81}, "80"),
+                        ({"author": ""}, "Give it an author"),
+                        ({"description": "y" * 301}, "300")):
+        r = c.post(f"/api/v1/share/listed?w={handle}",
+                   json={"kind": "wiki", "path": "", "on": True, **body})
+        assert r.status_code == 400 and words in r.json()["error"], body
+    assert entries(app) == []
+    # with no author given, it is the lister's name; never their address
+    listed(c, handle, "wiki", "")
+    (e,) = entries(app)
+    assert e["author"] == "owner" and "@" not in e["author"]
+
+
+def test_a_listing_shows_a_picture_of_its_graph(app):
+    c, tok, handle = owner_with_wiki(app)
+    _d, e = listed_notes(app, c, handle, tok)
+    assert e["preview_url"].startswith(f"https://app.dexio.wiki/api/v1/directory/{e['id']}/"
+                                       "preview.svg?v=")
+    r = browser(app).get(e["preview_url"].replace("https://app.dexio.wiki", ""))
+    assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg+xml")
+    assert "max-age=86400" in r.headers["cache-control"]
+    svg = r.text
+    assert svg.startswith("<svg") and svg.count("<circle") == 3      # the folder's pages only
+    assert svg.count("<line") == 1                                   # plan -> deep/more
+    # a change to the wiki gives the picture a new address
+    mcp(app, tok, "write_page", path="notes/extra", text="# Extra\n\n[[notes/plan]]\n")
+    (e2,) = entries(app)
+    assert e2["preview_url"] != e["preview_url"]
+    assert browser(app).get(e2["preview_url"].replace("https://app.dexio.wiki", "")
+                            ).text.count("<circle") == 4
+    # nothing unlisted has a picture
+    listed(c, handle, "folder", "notes", on=False)
+    assert browser(app).get(f"/api/v1/directory/{e['id']}/preview.svg").status_code == 404

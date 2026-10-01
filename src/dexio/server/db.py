@@ -162,6 +162,13 @@ MIGRATIONS = [
     # When a public share's owner listed it in the directory on dexio.wiki, where
     # anyone can find it and make a copy (shares.set_listed); NULL when not listed.
     ("shares", "listed_at", "REAL"),
+    # What the directory shows for a listing, as its owner wrote it (Forrest, 2026-10-01:
+    # "when they publish a wiki, we should allow them to give it a name and description",
+    # and "show the author"); NULL falls back to the wiki's own (shares.listing).
+    ("shares", "listed_title", "TEXT"),
+    ("shares", "listed_description", "TEXT"),
+    ("shares", "listed_author", "TEXT"),
+    ("shares", "listed_by", "INTEGER"),
 ]
 
 # A page's history keeps a whole copy at least every this many revisions, so

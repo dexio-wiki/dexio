@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from .. import VERSION, ais, themes
 from ..render import server_page
 from . import (auth, billing, copies, db, device, erase, files, mail, membership, oauth,
-               pages, shares, signups, social)
+               pages, preview, shares, signups, social)
 from . import desktop as desktop_signin
 from . import history as page_history
 from .ratelimit import Limiter, client_ip
@@ -581,7 +581,9 @@ def get_app(db_path: str | None = None) -> FastAPI:
         kind, path = str(f.get("kind") or ""), str(f.get("path") or "")
         on = f.get("on") in (True, "1", "true", "on", 1)
         try:
-            shares.set_listed(conn, ws["id"], kind, path, on)
+            shares.set_listed(conn, ws["id"], kind, path, on, by=user["id"],
+                              title=f.get("title"), description=f.get("description"),
+                              author=f.get("author"))
         except shares.ShareError as e:
             raise HTTPException(400, str(e)) from None
         return share_dialog(ws, user, kind, path)
@@ -594,10 +596,23 @@ def get_app(db_path: str | None = None) -> FastAPI:
         Only what owners chose to list, all of it already public."""
         items = shares.directory(conn)
         for it in items:
-            it["url"] = issuer + it["url"]
-            it["copy_url"] = issuer + it["copy_url"]
+            for key in ("url", "copy_url", "preview_url"):
+                it[key] = issuer + it[key]
         return JSONResponse({"wikis": items}, headers={
             "Access-Control-Allow-Origin": "*", "Cache-Control": "public, max-age=300"})
+
+    @app.get(API + "/directory/{share_id}/preview.svg")
+    def directory_preview(share_id: str):
+        """A picture of a listed wiki's graph for its card (preview.py). The
+        address carries the listing's version, so it can be cached for long."""
+        share = shares.listed(conn, share_id)
+        info = shares.listing(conn, share) if share else None
+        if not share or not info:
+            raise HTTPException(404, "not listed")
+        return Response(preview.svg(conn, share, info["version"]), media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400",
+                                 "Access-Control-Allow-Origin": "*",
+                                 "X-Content-Type-Options": "nosniff"})
 
     def copy_source(from_id) -> tuple[dict, dict]:
         share = shares.listed(conn, from_id)

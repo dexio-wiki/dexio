@@ -1858,8 +1858,8 @@ def copy_page(info: dict, email: str, dests: list[dict], from_id: int, *,
              f'{" checked" if pick == "new" else ""}><span class="wsf-tile wsf-new">+</span>'
              f'<span class="wsf-name">A new workspace, {e(info["title"])}</span>{check}</label>')
     n = int(info.get("pages") or 0)
-    size = f'{n:,} page{"s" if n != 1 else ""}' + (
-        f' · from {info["workspace"]}' if info.get("workspace") and info["kind"] != "wiki" else "")
+    size = (f'by {info["author"]} · ' if info.get("author") else "") + (
+        f'{n:,} page{"s" if n != 1 else ""}')
     about = f'<span class="cp-about">{e(info["description"])}</span>' if info.get("description") else ""
     body = f"""{WORKSPACE_FIELD_CSS}{COPY_CSS}<form method="post" action="/copy">
       {_message(error)}
