@@ -135,6 +135,11 @@ Files: upload_file uploads one (images, PDFs, decks), list_files lists them, rea
 search_pages read and search them like pages, and delete_file removes one for good: files
 keep no history.
 
+Who can see it: set_visibility reports or sets who can open a page, a folder or the whole
+wiki: restricted (members), link (anyone with the url) or published (listed on dexio.wiki).
+Open something to the public only when the person asks for it. Sharing with one person by
+email is done in the app.
+
 Take the whole wiki out: GET https://app.dexio.wiki/api/v1/export with the same bearer
 returns every page as a zip of markdown files at their paths.
 
@@ -1154,6 +1159,110 @@ def build_mcp(conn) -> MCPServer:
                 "pages_changed": stats["changed"], "pages_removed": stats["removed"],
                 "broken_links": broken, "now_broken_elsewhere": elsewhere,
                 "wiki_stats": summary(stats)}
+
+    # ---- visibility ------------------------------------------------------
+    # Forrest, 2026-10-01: "does the mcp support changing the visibility of a page or
+    # a folder?", then "wire it up". The Share dialog's three levels (shares.py),
+    # with the same rules and the same functions behind them. Sharing with a person
+    # by email stays in the app: it writes to someone outside the workspace.
+    def target_of(row, path: str, kind: str | None) -> tuple[str, str]:
+        """(kind, path) for what set_visibility names: the whole wiki for an
+        empty path, else the page or folder there; `kind` decides when a page and
+        a folder share a path."""
+        ws = row["workspace_id"]
+        p = "" if not str(path or "").strip().strip("/") else _norm_path(path)
+        k = db.wiki_key(ws)
+        if kind is None:
+            if not p:
+                kind = "wiki"
+            else:
+                page, folder = bool(db.note(conn, k, p)), bool(db.page_paths(conn, k, p))
+                if page and folder:
+                    raise ToolError(f"{p!r} is both a page and a folder; pass kind \"page\" or"
+                                    " \"folder\"")
+                if not page and not folder:
+                    raise ToolError(f"no page or folder {p!r}; list_pages shows what exists")
+                kind = "page" if page else "folder"
+        try:
+            return shares.norm_target(conn, ws, kind, p)
+        except shares.ShareError as e:
+            raise ToolError(str(e)) from None
+
+    def visibility_of(row, kind: str, path: str) -> dict:
+        """Who can open the target now, counting wider shares (the broadest wins):
+        restricted, link or published, and the share it comes from when that is
+        a folder or the wiki above it."""
+        ws = row["workspace_id"]
+        rows = [r for r in conn.execute(
+            "SELECT kind, path, email, user_id, listed_at FROM shares WHERE workspace_id=?"
+            " ORDER BY id", (ws,)).fetchall() if shares.covers(r["kind"], r["path"], kind, path)]
+        pub = [r for r in rows if r["email"] is None and r["user_id"] is None]
+        own = next((r for r in pub if (r["kind"], r["path"]) == (kind, path)), None)
+        wider = [r for r in pub if (r["kind"], r["path"]) != (kind, path)]
+        if own is not None and own["listed_at"]:
+            level, via = "published", None
+        elif any(r["listed_at"] for r in wider):
+            level, via = "published", next(r for r in wider if r["listed_at"])
+        elif own is not None:
+            level, via = "link", None
+        elif wider:
+            level, via = "link", wider[0]
+        else:
+            level, via = "restricted", None
+        if kind == "folder":
+            url = page_url(row) + "?folder=" + quote(path, safe="/")
+        else:
+            url = page_url(row, path or None)
+        out = {"kind": kind, "path": path, "title": shares.title_of(conn, ws, kind, path),
+               "visibility": level, "url": url,
+               "shared_with_people": len({r["email"] for r in rows if r["email"] is not None})}
+        if own is not None and own["listed_at"]:
+            form = shares.listing_form(conn, ws, kind, path, 0)
+            out["listing"] = {"title": form["title"], "description": form["description"],
+                              "publisher": form["publisher"]}
+        if via is not None:
+            name = "the wiki" if via["kind"] == "wiki" else f"{via['kind']} {via['path']}"
+            out["via"] = {"kind": via["kind"], "path": via["path"],
+                          "title": shares.title_of(conn, ws, via["kind"], via["path"])}
+            out["hint"] = f"it is {level} because {name} is; set_visibility on that changes it"
+        return out
+
+    @server.tool(annotations=ann(WRITE, "Set visibility"))
+    def set_visibility(ctx: Context, path: str = "",
+                       visibility: Literal["restricted", "link", "published"] | None = None,
+                       kind: Literal["page", "folder", "wiki"] | None = None,
+                       title: str | None = None, description: str | None = None) -> dict:
+        """Who can open a page, a folder (everything under it) or the whole wiki (empty
+        path), or change it. restricted: members, and people it was shared with by
+        email. link: anyone with its url can read it; search engines are asked not to
+        list it. published: public and listed on dexio.wiki, where anyone can find it
+        and copy it, and search engines list it; a folder or the wiki only, with title
+        and description for the listing. Without visibility it reports and changes
+        nothing. A folder's or the wiki's wider setting still applies to what is in it.
+        Opening something to the public is for when the person asks for it."""
+        row = caller(ctx)
+        ws = row["workspace_id"]
+        kind_, p = target_of(row, path, kind)
+        if visibility is None:
+            return {"ok": True, "changed": False, **visibility_of(row, kind_, p)}
+        before = visibility_of(row, kind_, p)
+        by = db.person_of(conn, row)
+        if by is None:
+            raise ToolError("this key has no account behind it to make the change as")
+        try:
+            if visibility == "published":
+                shares.publish(conn, ws, kind_, p, True, by, title=title,
+                               description=description)
+            else:
+                own = shares._own_public(conn, ws, kind_, p)
+                if visibility == "link" and own is not None and own["listed_at"]:
+                    shares.publish(conn, ws, kind_, p, False, by)    # off dexio.wiki, still open
+                else:
+                    shares.set_public(conn, ws, kind_, p, visibility == "link", by)
+        except shares.ShareError as e:
+            raise ToolError(str(e)) from None
+        after = visibility_of(row, kind_, p)
+        return {"ok": True, "changed": after != before, **after}
 
     # agent defaults to "" in Python so a client that omits it gets _check_agent's
     # message (reconnect to load the current tools) rather than a bare validation

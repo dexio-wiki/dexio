@@ -84,6 +84,7 @@ Over MCP at `/mcp`:
 | Write | `write_page`, `edit_page`, `append_page`, `move_page`, `delete_page` |
 | Many at once | `change_pages`: up to 200 changes as one step, all or none |
 | Files | `upload_file`, `delete_file` |
+| Visibility | `set_visibility`: a page, folder or the whole wiki restricted, open to anyone with the link, or published |
 | Upkeep | `wiki_health` |
 
 Search matches a question's words, not one exact phrase. Files such as images, PDFs and

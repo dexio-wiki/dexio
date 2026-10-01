@@ -113,7 +113,8 @@ def test_lists_tools(server):
     # A workspace has one wiki (2026-09-28): no tool lists, creates or renames wikis.
     assert names == {"list_pages", "wiki_health", "read_page", "search_pages",
                      "page_history", "write_page", "edit_page", "append_page", "delete_page",
-                     "move_page", "change_pages", "upload_file", "list_files", "delete_file"}
+                     "move_page", "change_pages", "upload_file", "list_files", "delete_file",
+                     "set_visibility"}
 
 
 def test_list_and_health(server):
