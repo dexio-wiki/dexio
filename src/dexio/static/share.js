@@ -530,13 +530,16 @@
       (naming && dlg.querySelector("#sd-p-publisher").value.trim() !== "");
   }
 
-  // Publish while Published waits; once published, Save, shown only when the
-  // name or description says something new.
+  // Publish while Published waits. Once published it reads Published, greyed
+  // out (Forrest, 2026-10-01: "If the wiki is published, the button should say
+  // Published and be greyed out"), and turns into Save when the name or
+  // description says something new.
   function showPubButton() {
     if (!cur) return;
     const b = dlg.querySelector(".sd-pub"), live = level(cur) === "published";
-    b.textContent = live ? "Save" : "Publish";
-    b.parentElement.hidden = live && !fieldsChanged();
+    const changed = live && fieldsChanged();
+    b.textContent = !live ? "Publish" : changed ? "Save" : "Published";
+    b.disabled = live && !changed;
   }
 
   // The dialog shares what Share was pressed on (the page open, else the folder in
@@ -647,8 +650,8 @@
       fillPublish(pstate);
       staged = null;
       render(await call("GET", "share", { kind: t.kind, path: t.path }));
-      gmsg(was === "published" ? "Saved. dexio.wiki shows the new details within a few minutes."
-                               : "Published on dexio.wiki.");
+      // after a first Publish the greyed Published button says it
+      gmsg(was === "published" ? "Saved. dexio.wiki shows the new details within a few minutes." : "");
     } catch (err) {
       gmsg(err.message, true);
     } finally {

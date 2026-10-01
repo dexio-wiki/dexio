@@ -1467,9 +1467,11 @@ __THEME_HEAD__
   .sd-publish[hidden], .sd-publish label[hidden], .sd-publish button[hidden] { display: none; }
   .sd-publish .pd-shot { margin: 0 0 10px; }
   .sd-publish .pd-by { margin: 8px 0 0; }
-  /* Publish, the second press Published takes; Save once it is published. */
+  /* Publish, the second press Published takes; once published, a greyed
+     Published, which turns into Save after an edit. */
   .sd-pfoot { display: flex; justify-content: flex-end; margin-top: 12px; }
-  .sd-pfoot[hidden] { display: none; }
+  .sd-pfoot .sd-pub:disabled { border-color: var(--line); background: var(--sunken); color: var(--muted);
+                               cursor: default; }
   .sd-whosec[hidden] { display: none; }
   /* The address under Visibility, Copy at its end; a click on it selects all of it. */
   .sd-link { display: flex; align-items: stretch; margin: 12px 0 0 42px; border: 1px solid var(--line);
