@@ -457,11 +457,13 @@ _MD_TEXT = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
 _STRONG = re.compile(r"(\*\*|__)(.+?)\1")
 _EM = re.compile(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])")
 _TAG = re.compile(r"</?[A-Za-z][^>]*>")
+_FN_REF = re.compile(r"\[\^[^\]\s]+\]")       # a footnote's citation, [^1]: not words
 _SENTENCE_END = re.compile(r"[.!?](?=\s+[\"'“‘(\[`*_]?[A-Z0-9])")
 
 
 def _plain(s: str) -> str:
     """Markdown inline syntax reduced to the words a reader sees."""
+    s = _FN_REF.sub("", s)
     s = _WIKI_ALIAS.sub(lambda m: (m.group(2) or m.group(1)).strip(), s)
     s = _MD_TEXT.sub(lambda m: m.group(1), s)
     s = _STRONG.sub(lambda m: m.group(2), s)

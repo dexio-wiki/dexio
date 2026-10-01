@@ -1510,6 +1510,161 @@
     return (n && n.title) || id;
   }
 
+  // ---- footnotes ----
+  // Citations (Forrest, 2026-10-01). "[^label]" after a claim and a line
+  // "[^label]: the source" anywhere in the page, the syntax GitHub, Obsidian
+  // and Pandoc share, so it is what agents already write. The reference reads
+  // as a bracketed number, [1], and the notes are listed at the end of the
+  // page in the order they are first cited, each with a link back to where it
+  // was cited. A note no text cites is still listed, after the rest, rather
+  // than dropped; a reference to a note the page does not have stays as
+  // written. Labels match regardless of case, as GitHub's do.
+  const FN_DEF = /^ {0,3}\[\^([^\]\s]+)\]:[ \t]?(.*)$/;
+  const FN_REF = /\[\^([^\]\s]+)\]/g;
+  const FN_BLOCK = /^\s*(#{1,6}\s|>|[-*+•]\s|\d+[.)]\s|```)|^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
+
+  // The notes of the page being rendered: renderMarkdown sets it, inline
+  // numbers the references as it meets them.
+  let notes = null;
+
+  // Take the "[^label]: note" lines out of the page, outside fenced code. A
+  // note goes on over the lines after it, as a paragraph does, and over
+  // lines indented four spaces (or a tab) after a blank line: its further
+  // paragraphs. Each note leaves a blank line behind, so the text either side
+  // of it stays two paragraphs.
+  function takeNotes(lines) {
+    const body = [], defs = [];
+    let fenced = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!fenced && /^\s*```(\w*)\s*$/.test(line)) { fenced = true; body.push(line); continue; }
+      if (fenced) { body.push(line); if (/^\s*```\s*$/.test(line)) fenced = false; continue; }
+      const m = line.match(FN_DEF);
+      if (!m) { body.push(line); continue; }
+      const paras = [[m[2]]];
+      let j = i + 1;
+      while (j < lines.length) {
+        const l = lines[j];
+        if (/^\s*$/.test(l)) {
+          let k = j;
+          while (k < lines.length && /^\s*$/.test(lines[k])) k++;
+          if (k < lines.length && /^(?: {4}|\t)/.test(lines[k])) {
+            paras.push([lines[k].trim()]);
+            j = k + 1;
+            continue;
+          }
+          break;
+        }
+        if (FN_DEF.test(l) || (!/^(?: {4}|\t)/.test(l) && FN_BLOCK.test(l))) break;
+        paras[paras.length - 1].push(l.trim());
+        j++;
+      }
+      defs.push({ label: m[1].toLowerCase(), paras: paras.map((p) => p.join(" ").trim()) });
+      body.push("");
+      i = j - 1;
+    }
+    return { body, defs };
+  }
+
+  // A note as plain text, for the tooltip on its reference.
+  function notePlain(paras) {
+    const s = paras.join(" ")
+      .replace(/!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_m, t, a) => a || t)
+      .replace(/!?\[([^\]]*)\]\(([^)\s]+)\)/g, (_m, t, u) => (t && t !== u ? t + " (" + u + ")" : u))
+      .replace(FN_REF, "").replace(/\*\*|__|`/g, "").replace(/\s+/g, " ").trim();
+    return s.length > 300 ? s.slice(0, 299).trimEnd() + "…" : s;
+  }
+
+  // "[^label]" in a line's (escaped) text, as the note's number. The markup
+  // is held aside, as code spans are, and put in last: the note's text in its
+  // tooltip must not be read as bold, a link or an address.
+  const NOTE_TOKEN = "NOTE";
+  function noteRefs(s, held) {
+    if (!notes) return s;
+    return s.replace(FN_REF, (m, raw) => {
+      const label = unescapeHtml(raw).toLowerCase();
+      const def = notes.byLabel.get(label);
+      if (!def) return m;
+      if (!def.n) { def.n = notes.order.length + 1; notes.order.push(def); }
+      def.refs++;
+      const ref = "fnref-" + def.n + (def.refs > 1 ? "-" + def.refs : "");
+      held.push('<sup class="fn-ref" id="' + ref + '"><a href="#fn-' + def.n + '" data-fn="fn-' +
+        def.n + '" title="' + escapeHtml(notePlain(def.paras)) + '">' + def.n + "</a></sup>");
+      return NOTE_TOKEN + (held.length - 1) + "";
+    });
+  }
+
+  // The list at the end of the page. Rendering a note can cite another
+  // (a note that says "see [^2]"), which joins the list as it is met.
+  function renderNotes(from) {
+    const items = [];
+    let k = 0;
+    const flush = () => { while (k < notes.order.length) items.push(noteItem(notes.order[k++], from)); };
+    flush();
+    for (const def of notes.defs) {
+      if (def.n) continue;
+      def.n = notes.order.length + 1;
+      notes.order.push(def);
+      flush();
+    }
+    return items.length ? '<section class="footnotes" aria-label="Notes"><ol>' +
+      items.join("") + "</ol></section>" : "";
+  }
+
+  function noteItem(def, from) {
+    const backs = [];
+    for (let r = 1; r <= def.refs; r++) {
+      const ref = "fnref-" + def.n + (r > 1 ? "-" + r : "");
+      backs.push('<a href="#' + ref + '" class="fn-back" data-fn="' + ref + '" aria-label="Back to ' +
+        "where note " + def.n + " is cited" + (def.refs > 1 ? " (" + r + ")" : "") + '">↩' +
+        (r > 1 ? "<sup>" + r + "</sup>" : "") + "</a>");
+    }
+    const back = backs.length ? " " + backs.join(" ") : "";
+    const paras = def.paras.map((p) => inline(p, from));
+    const body = paras.length === 1 ? paras[0] + back
+      : paras.map((p, k) => "<p>" + p + (k === paras.length - 1 ? back : "") + "</p>").join("");
+    return '<li id="fn-' + def.n + '">' + body + "</li>";
+  }
+
+  // Outside links get no search ranking from a shared page (see inline).
+  function outRel() {
+    return GUEST ? "ugc nofollow noopener noreferrer" : "noopener noreferrer";
+  }
+
+  // A bare https:// address in the text is a link, as GitHub makes it: a
+  // note is often nothing but its source's address. Only text outside the
+  // links the markup made is looked at; "<https://...>" loses its brackets.
+  // Punctuation that ends the sentence, and a closing bracket the address
+  // did not open, stay outside the link.
+  function autolink(s) {
+    let inLink = 0;
+    return s.split(/(<[^>]+>)/).map((part) => {
+      if (part[0] === "<") {
+        if (/^<a[\s>]/i.test(part)) inLink++;
+        else if (/^<\/a>/i.test(part)) inLink = Math.max(0, inLink - 1);
+        return part;
+      }
+      if (inLink || !/https?:\/\//i.test(part)) return part;
+      return part.replace(/&lt;(https?:\/\/[^\s<]+?)&gt;|https?:\/\/(?:(?!&lt;|&gt;|&quot;)[^\s<])+/gi,
+        (m, angled) => {
+          let url = angled || m, tail = "";
+          if (!angled) {
+            for (;;) {
+              const p = /(?:&#39;|[.,:;!?*_~'])$/.exec(url);
+              if (p) { tail = p[0] + tail; url = url.slice(0, -p[0].length); continue; }
+              if (url.endsWith(")") &&
+                  (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length) {
+                tail = ")" + tail; url = url.slice(0, -1); continue;
+              }
+              break;
+            }
+          }
+          if (/^https?:\/\/$/i.test(url)) return m;
+          return '<a href="' + url + '" target="_blank" rel="' + outRel() + '">' + url + "</a>" + tail;
+        });
+    }).join("");
+  }
+
   function inline(text, from) {
     // Code spans are pulled out first so their contents are never treated as
     // markup, then restored at the end.
@@ -1520,6 +1675,9 @@
     });
 
     s = escapeHtml(s);
+
+    const held = [];
+    s = noteRefs(s, held);
 
     // ![[image.png]] (the Obsidian embed) and ![alt](images/a.png): the wiki's
     // own images. Anything else stays as written.
@@ -1591,6 +1749,8 @@
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
     s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
+
+    s = autolink(s).replace(/NOTE(\d+)/g, (_m, i) => held[+i]);
 
     return s.replace(/CODE(\d+)/g,
                      (_m, i) => "<code>" + escapeHtml(spans[+i]) + "</code>");
@@ -1688,8 +1848,24 @@
   }
 
   function renderMarkdown(src, from, title) {
-    const lines = dropTitle(
-      stripComments(stripFrontMatter(String(src || ""))).split(/\r?\n/), title);
+    const taken = takeNotes(dropTitle(
+      stripComments(stripFrontMatter(String(src || ""))).split(/\r?\n/), title));
+    const byLabel = new Map();
+    for (const def of taken.defs) {
+      def.n = 0; def.refs = 0;
+      if (!byLabel.has(def.label)) byLabel.set(def.label, def);   // the first wins
+    }
+    const outer = notes;
+    notes = { defs: taken.defs, byLabel, order: [] };
+    try {
+      const body = renderBlocks(taken.body, from), list = renderNotes(from);
+      return list ? body + "\n" + list : body;
+    } finally {
+      notes = outer;
+    }
+  }
+
+  function renderBlocks(lines, from) {
     const out = [];
     const used = new Set();        // heading anchors so far; repeats get -2, -3
     let i = 0, list = null;
@@ -3268,7 +3444,14 @@
           `aria-label="Link to this section" title="Link to this section">${LINK_ICON}</a>`);
       }
       if (lvl > 1) continue;
-      const text = h.textContent.trim();
+      // a footnote's number in a heading is not part of its name
+      let text = h.textContent;
+      if (h.querySelector(".fn-ref")) {
+        const c = h.cloneNode(true);
+        c.querySelectorAll(".fn-ref").forEach((x) => x.remove());
+        text = c.textContent;
+      }
+      text = text.trim();
       if (!text) continue;
       let id = h.id;
       if (!id) {
@@ -3339,7 +3522,9 @@
   // Scroll the page so a section's heading sits just under the pinned head.
   // A jump, as Wikipedia's contents make: smooth scrolling took Chrome two
   // seconds to cross a long page.
-  function jumpTo(id) {
+  // mark: false for a place that is not a section (a footnote), which then
+  // leaves the contents marking whatever section the scroll lands in.
+  function jumpTo(id, mark) {
     let top = 0;
     if (id) {
       const el = panel.querySelector("#" + CSS.escape(id));
@@ -3350,7 +3535,7 @@
     top = Math.round(Math.max(0, Math.min(top, panel.scrollHeight - panel.clientHeight)));
     // A section near the end can't reach the top; remember which one was
     // asked for, so it is the one marked once the scroll stops short.
-    toc.jump = { id, top };
+    toc.jump = mark === false ? null : { id, top };
     panel.scrollTop = top;
     spyContents();
   }
@@ -3396,6 +3581,19 @@
           li.querySelector(".toc-chev").setAttribute("aria-expanded", String(!shut));
         });
         placeGrip();            // folding can take the column's scrollbar away
+        return;
+      }
+      // a footnote's number jumps to its note, the note's arrow back to where
+      // it is cited, and what it lands on is lit until the next jump, as
+      // Wikipedia lights a reference. The address stays the page's.
+      const fn = t.closest("a[data-fn]");
+      if (fn) {
+        e.preventDefault();
+        const id = fn.dataset.fn;
+        jumpTo(id, false);
+        panel.querySelectorAll(".fn-lit").forEach((x) => x.classList.remove("fn-lit"));
+        const to = panel.querySelector("#" + CSS.escape(id));
+        if (to) to.classList.add("fn-lit");
         return;
       }
       // an entry in the contents, or the link icon beside a heading

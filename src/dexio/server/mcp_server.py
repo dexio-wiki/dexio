@@ -98,6 +98,9 @@ When to use it:
   decision and its reason, a research finding with its source, how something works, or a
   correction to a page. Search for the page that covers the topic and edit it; create a
   page only when none does. Then tell the user what you recorded, with the page's url.
+- Cite a source with a footnote: [^1] after the claim, and a line "[^1]: the source, with
+  its link" anywhere on the page. The page shows the citation as [1] and lists the notes
+  at its end.
 - Leave out small talk, one-off lookups, unfinished drafts, secrets, and anything the user
   asks you to keep out of the wiki.
 

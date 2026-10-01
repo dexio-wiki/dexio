@@ -25,6 +25,11 @@ def test_markdown_is_reduced_to_plain_text():
     assert description_of(text) == "See the docs and list_pages for more on it."
 
 
+def test_footnote_citations_and_notes_are_not_the_description():
+    text = "# T\n\n[^1]: The source.\n\nChurn fell 4%[^1] last quarter. Next.\n"
+    assert description_of(text) == "Churn fell 4% last quarter."
+
+
 def test_a_paragraph_wrapped_over_lines_is_one_sentence():
     text = "# T\n\nThis sentence is\nwrapped across\nthree lines. Then another.\n"
     assert description_of(text) == "This sentence is wrapped across three lines."

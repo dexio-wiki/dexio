@@ -476,5 +476,76 @@ check("no search, nothing marked", () => {
   assert.deepEqual(hits("", "anything"), []);
 });
 
+console.log("footnotes and bare addresses");
+
+check("a footnote is a numbered citation, and its note is listed at the end", () => {
+  const html = renderMarkdown(
+    "Churn fell 4%.[^src] More text.\n\n[^src]: Acme 2026 report, [PDF](https://example.com/r.pdf)\n\nAfter.", "x");
+  assert.match(html, /<p>Churn fell 4%\.<sup class="fn-ref" id="fnref-1"><a href="#fn-1" data-fn="fn-1" title="Acme 2026 report, PDF \(https:\/\/example\.com\/r\.pdf\)">1<\/a><\/sup> More text\.<\/p>/);
+  assert.ok(!html.includes("[^"), "no raw footnote syntax is left");
+  assert.match(html, /<p>After\.<\/p>\n<section class="footnotes" aria-label="Notes"><ol><li id="fn-1">Acme 2026 report, <a href="https:\/\/example\.com\/r\.pdf"/);
+  assert.match(html, /<a href="#fnref-1" class="fn-back" data-fn="fnref-1" aria-label="Back to where note 1 is cited">↩<\/a><\/li><\/ol><\/section>$/);
+});
+
+check("notes are numbered in the order they are cited, and a note cited twice links back twice", () => {
+  const html = renderMarkdown(
+    "[^b]: Second written.\n[^a]: First written.\n\nOne[^a], two[^b], again[^A].", "x");
+  assert.match(html, /One<sup class="fn-ref" id="fnref-1"><a href="#fn-1"[^>]*>1<\/a><\/sup>/);
+  assert.match(html, /two<sup class="fn-ref" id="fnref-2"><a href="#fn-2"[^>]*>2<\/a><\/sup>/);
+  assert.match(html, /again<sup class="fn-ref" id="fnref-1-2"><a href="#fn-1"[^>]*>1<\/a><\/sup>/,
+    "labels match regardless of case");
+  assert.match(html, /<li id="fn-1">First written\. <a href="#fnref-1"[^>]*>↩<\/a> <a href="#fnref-1-2"[^>]*>↩<sup>2<\/sup><\/a><\/li><li id="fn-2">Second written\./);
+});
+
+check("a citation of a note the page lacks stays as written; an uncited note is still listed", () => {
+  const html = renderMarkdown("Claim[^1] and claim[^nope].\n\n[^1]: Cited.\n[^2]: Never cited.", "x");
+  assert.ok(html.includes("claim[^nope]."), html);
+  assert.match(html, /<li id="fn-1">Cited\. <a[^>]*fn-back[^>]*>↩<\/a><\/li><li id="fn-2">Never cited\.<\/li>/);
+});
+
+check("a note runs over its following lines and indented paragraphs", () => {
+  const html = renderMarkdown(
+    "Text[^n].\n\n[^n]: First line\ngoes on here.\n\n    A second paragraph.\n\n## Next\n\nBody.", "x");
+  assert.match(html, /<li id="fn-1"><p>First line goes on here\.<\/p><p>A second paragraph\. <a href="#fnref-1"[^>]*>↩<\/a><\/p><\/li>/);
+  assert.match(html, /<h3 id="s-next">Next<\/h3>\n<p>Body\.<\/p>/, "the page goes on after the note");
+});
+
+check("a note straight after a paragraph does not join the text either side", () => {
+  const html = renderMarkdown("Before[^1].\n[^1]: The note.\n\nAfter.", "x");
+  assert.match(html, /<p>Before<sup[^>]*>.*?<\/sup>\.<\/p>\n<p>After\.<\/p>/);
+});
+
+check("footnote syntax in code is left alone", () => {
+  const html = renderMarkdown("Use `[^1]` like this.\n\n```\n[^1]: not a note\n```\n\n[^1]: Real.", "x");
+  assert.ok(html.includes("<code>[^1]</code>"), html);
+  assert.ok(html.includes("[^1]: not a note"), "a fenced block keeps its text");
+  assert.match(html, /<li id="fn-1">Real\.<\/li>/, "the real note is listed, uncited");
+});
+
+check("markup in a note cannot break its citation's tooltip", () => {
+  const html = renderMarkdown("A *word*[^1] and *more*.\n\n[^1]: 5*3 is \"15\" <b>", "x");
+  assert.match(html, /title="5\*3 is &quot;15&quot; &lt;b&gt;">1<\/a><\/sup>/);
+  assert.ok(!/title="[^"]*<em>/.test(html), html);
+});
+
+check("a footnote in a heading leaves the heading's anchor as the server makes it", () => {
+  const html = renderMarkdown("## Results[^1]\n\n[^1]: Source.", "x");
+  assert.match(html, /<h3 id="s-results-1">Results<sup class="fn-ref"/);
+});
+
+check("a bare web address is a link, without the sentence's punctuation", () => {
+  const html = renderMarkdown(
+    "See https://example.com/a?b=1&c=2. Or (https://en.wikipedia.org/wiki/Foo_(bar)), or <https://example.org/x>.", "x");
+  assert.ok(html.includes('See <a href="https://example.com/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer">https://example.com/a?b=1&amp;c=2</a>. Or'), html);
+  assert.ok(html.includes('(<a href="https://en.wikipedia.org/wiki/Foo_(bar)" target="_blank" rel="noopener noreferrer">https://en.wikipedia.org/wiki/Foo_(bar)</a>), or'), html);
+  assert.ok(html.includes('or <a href="https://example.org/x" target="_blank" rel="noopener noreferrer">https://example.org/x</a>.'), html);
+});
+
+check("an address already in a link, or in code, is not linked again", () => {
+  const html = renderMarkdown("[https://example.com](https://example.com) and `https://example.com/code`", "x");
+  assert.equal((html.match(/<a /g) || []).length, 1, html);
+  assert.ok(html.includes("<code>https://example.com/code</code>"));
+});
+
 console.log(failures ? `\n${failures} failing` : "\nall passing");
 process.exit(failures ? 1 : 0);

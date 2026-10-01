@@ -1086,6 +1086,21 @@ __THEME_HEAD__
   .md tbody tr:nth-child(even) td {
     background: color-mix(in srgb, var(--sunken) 45%, transparent);
   }
+  /* Footnotes (graph.js): a citation reads [1], as Wikipedia's do, and the
+     notes are a smaller list at the end of the page under a rule, or under
+     the page's own heading when the notes were written beneath one. */
+  .md sup.fn-ref { font-size: .72em; line-height: 0; vertical-align: super; white-space: nowrap; }
+  .md sup.fn-ref a::before { content: "["; }
+  .md sup.fn-ref a::after { content: "]"; }
+  .md .footnotes { margin-top: 1.6em; padding-top: .5em; border-top: 1px solid var(--line);
+                   font-size: 13.5px; line-height: 1.5; }
+  .md :is(h2, h3, h4, h5, h6) + .footnotes { margin-top: .4em; padding-top: 0; border-top: 0; }
+  .md .footnotes ol { margin: .4em 0; padding-left: 1.8em; }
+  .md .footnotes li { margin: .3em 0; padding: 0 .2em; border-radius: 3px; }
+  .md .footnotes li p { margin: .3em 0; }
+  .md .fn-back { text-decoration: none; }
+  .md .fn-back sup { font-size: .75em; }
+  .md .fn-lit { background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 3px; }
   /* Close: a quiet icon button that fills in on hover, rather than a boxed
      word. Esc closes too (graph.js). */
   #panel #close {
