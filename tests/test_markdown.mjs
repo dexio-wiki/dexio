@@ -185,6 +185,30 @@ check("a blank line between items does not end the list", () => {
   assert.match(mixed, /<\/ul>\n<ol>\n<li>b<\/li>/, "a different kind of list still starts its own");
 });
 
+check("blocks indented under an item belong to it", () => {
+  // Forrest, 2026-10-01 ("fix it?"): the guides' code blocks and sub-bullets
+  // should sit under their step, not between the steps.
+  const html = renderMarkdown(
+    "1. Build the image:\n\n   ```dockerfile\n   FROM base\n     RUN x\n   ```\n\n" +
+    "   Pin the base image.\n\n2. Write the stack:\n   • a bucket\n   • a role\n     that wraps\n3. Deploy.", "x");
+  assert.equal((html.match(/<ol/g) || []).length, 1, "one list for all three steps");
+  assert.match(html, /^<ol>\n<li>Build the image:\n<pre><code>FROM base\n  RUN x<\/code><\/pre>\n<p>Pin the base image\.<\/p><\/li>/,
+               "the code keeps its own indent past the item's, and the paragraph after it stays in step 1");
+  assert.match(html, /<li>Write the stack:\n<ul>\n<li>a bucket<\/li>\n<li>a role that wraps<\/li>\n<\/ul><\/li>\n<li>Deploy\.<\/li>\n<\/ol>$/);
+});
+
+check("a nested list, and an unindented line continuing an item's text", () => {
+  const html = renderMarkdown("- top\n  - inner\n    - deepest\n- next\nlazy line\n\nAfter.", "x");
+  assert.match(html, /^<ul>\n<li>top\n<ul>\n<li>inner\n<ul>\n<li>deepest<\/li>\n<\/ul><\/li>\n<\/ul><\/li>\n<li>next lazy line<\/li>\n<\/ul>\n<p>After\.<\/p>$/);
+});
+
+check("an item ends at a line indented less than its text", () => {
+  // Two spaces under "1. " (text at column 3) is not enough to nest, as in CommonMark.
+  const html = renderMarkdown("1. step\n  - not nested\n\nOutside.", "x");
+  assert.match(html, /<ol>\n<li>step<\/li>\n<\/ol>\n<ul>\n<li>not nested/);
+  assert.match(html, /<p>Outside\.<\/p>$/);
+});
+
 check("fenced code is not treated as markup", () => {
   const html = renderMarkdown("```\n**not bold** [[not a link]]\n```", "x");
   assert.match(html, /<pre><code>/);

@@ -1044,6 +1044,11 @@ __THEME_HEAD__
   .md p { margin: .7em 0; }
   .md ul, .md ol { margin: .6em 0; padding-left: 1.3em; }
   .md li { margin: .25em 0; }
+  /* blocks inside a list item (graph.js listItemBody): a sub-list sits close
+     under its item; code and later paragraphs keep their usual spacing */
+  .md li > ul, .md li > ol { margin: .25em 0; }
+  .md li > pre { margin: .6em 0; }
+  .md li > p { margin: .5em 0; }
   .md hr { border: 0; border-top: 1px solid var(--line); margin: 1.2em 0; }
   .md blockquote {
     margin: .8em 0; padding: .1em 0 .1em .9em;

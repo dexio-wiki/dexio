@@ -1762,6 +1762,89 @@
   // bulleted section ran together into one paragraph.
   const ITEM_END = /^\s*$|^\s*(#{1,6}\s|>|[-*+•]\s|\d+[.)]\s|```)|^\s*(-{3,}|\*{3,}|_{3,})\s*$/;
 
+  // List items hold blocks, as in CommonMark (Forrest, 2026-10-01: a guide's code
+  // blocks and sub-bullets sat between its numbered steps instead of under them).
+  // An item's content starts where its text does, after the marker and its spaces;
+  // a following line indented that far or more belongs to the item (paragraphs,
+  // code, a nested list, a quote, a table), and so does a blank line followed by
+  // one. An unindented line straight after the item's text continues that text
+  // (CommonMark's lazy continuation) unless it starts a block of its own.
+  const LIST_ITEM = /^([ \t]*)([-*+•]|\d{1,9}[.)])([ \t]+)(.*)$/;
+
+  // Width of a line's leading whitespace, a tab reaching the next multiple of 4.
+  function leadWidth(s) {
+    let w = 0;
+    for (const ch of s) {
+      if (ch === " ") w++;
+      else if (ch === "\t") w += 4 - (w % 4);
+      else break;
+    }
+    return w;
+  }
+
+  // The line with up to `n` columns of leading whitespace taken off.
+  function dedent(s, n) {
+    let w = 0, k = 0;
+    while (k < s.length && w < n && (s[k] === " " || s[k] === "\t")) {
+      w += s[k] === "\t" ? 4 - (w % 4) : 1;
+      k++;
+    }
+    return (w > n ? " ".repeat(w - n) : "") + s.slice(k);
+  }
+
+  function listItemAt(line) {
+    const m = line.match(LIST_ITEM);
+    if (!m) return null;
+    const ind = leadWidth(m[1]);
+    // The spaces after the marker, counted from the column they start at.
+    let gap = 0;
+    for (const ch of m[3]) {
+      const at = ind + m[2].length + gap;
+      gap += ch === "\t" ? 4 - (at % 4) : 1;
+    }
+    const ordered = /^\d/.test(m[2]);
+    return { ordered, start: ordered ? parseInt(m[2], 10) : 1, text: m[4],
+             // Five or more spaces after the marker would make indented code in
+             // CommonMark; the content then starts one space after the marker.
+             col: ind + m[2].length + (gap <= 4 ? gap : 1) };
+  }
+
+  // The lines of the item starting at lines[i], dedented to its content column,
+  // and the index of the first line after it.
+  function listItemBody(lines, i, item) {
+    const body = [item.text];
+    let j = i + 1, inFence = /^\s*```(\w*)\s*$/.test(item.text), last = "text";
+    while (j < lines.length) {
+      const line = lines[j];
+      if (inFence) {
+        body.push(dedent(line, item.col));
+        if (/^\s*```\s*$/.test(line)) { inFence = false; last = "fence"; }
+        j++; continue;
+      }
+      if (/^\s*$/.test(line)) {
+        let k = j + 1;
+        while (k < lines.length && /^\s*$/.test(lines[k])) k++;
+        if (k >= lines.length || leadWidth(lines[k]) < item.col) break;
+        while (j < k) { body.push(""); j++; }
+        last = "blank";
+        continue;
+      }
+      if (leadWidth(line) >= item.col) {
+        const d = dedent(line, item.col);
+        body.push(d);
+        if (/^\s*```(\w*)\s*$/.test(d)) inFence = true;
+        last = "text";
+        j++; continue;
+      }
+      if (last === "text" && !ITEM_END.test(line) && !tableAt(lines, j)) {
+        body.push(line.trim());
+        j++; continue;
+      }
+      break;
+    }
+    return { body, next: j };
+  }
+
   // GFM tables. There was no table rule at all, so every row fell through to
   // the paragraph branch and a table read as one long line of pipes. A table
   // is a header row, a delimiter row (| --- | :-: |) with the same number of
@@ -1865,9 +1948,10 @@
     }
   }
 
-  function renderBlocks(lines, from) {
+  // used: heading anchors so far, shared with the blocks inside list items;
+  // repeats get -2, -3.
+  function renderBlocks(lines, from, used = new Set()) {
     const out = [];
-    const used = new Set();        // heading anchors so far; repeats get -2, -3
     let i = 0, list = null;
 
     const closeList = () => { if (list) { out.push("</" + list + ">"); list = null; } };
@@ -1930,28 +2014,30 @@
         continue;
       }
 
-      const ul = line.match(/^\s*[-*+•]\s+(.*)$/);
-      const ol = line.match(/^\s*(\d{1,9})[.)]\s+(.*)$/);
-      if (ul || ol) {
-        const want = ul ? "ul" : "ol";
+      const item = listItemAt(line);
+      if (item) {
+        const want = item.ordered ? "ol" : "ul";
         if (list !== want) {
           closeList();
           // A numbered list counts from its first item's number, as in CommonMark.
           // Steps split by a code block or a paragraph start a new list each
           // time, and every one of them showed "1." (Forrest, 2026-10-01).
-          const start = ol ? parseInt(ol[1], 10) : 1;
-          out.push(ol && start !== 1 ? '<ol start="' + start + '">' : "<" + want + ">");
+          out.push(item.ordered && item.start !== 1 ? '<ol start="' + item.start + '">'
+                                                    : "<" + want + ">");
           list = want;
         }
-        // A wrapped item goes on until a blank line or the start of another
-        // block, indented or not, the way CommonMark continuation lines do.
-        // Taking only the marker line dropped the rest into a stray <p>.
-        const buf = [ul ? ul[1] : ol[2]];
-        i++;
-        while (i < lines.length && !ITEM_END.test(lines[i]) && !tableAt(lines, i)) {
-          buf.push(lines[i++].trim());
+        // The item's text, wrapped lines included, and every block under it.
+        // Taking only the marker line once dropped the rest into a stray <p>.
+        const { body, next } = listItemBody(lines, i, item);
+        i = next;
+        let inner = renderBlocks(body, from, used);
+        // The item's first paragraph sits on the marker's line, unwrapped, so a
+        // one-line item renders as it always has: <li>text</li>.
+        if (inner.startsWith("<p>")) {
+          const end = inner.indexOf("</p>");
+          inner = inner.slice(3, end) + inner.slice(end + 4);
         }
-        out.push("<li>" + inline(buf.join(" "), from) + "</li>");
+        out.push("<li>" + inner + "</li>");
         continue;
       }
 
