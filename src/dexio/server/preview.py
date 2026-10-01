@@ -25,7 +25,9 @@ from . import db, shares
 PALETTE = ["#0077c8", "#c0392b", "#27ae60", "#8e44ad", "#d35400",
            "#16a085", "#7f8c8d", "#b7950b", "#2c3e50", "#a93226"]
 DIM, EDGE, BG = "#aab1b8", "#c9d1d9", "#ffffff"
-W, H, PAD = 640, 360, 26
+# A margin round the graph (Forrest, 2026-10-01: "i want to see more padding in the image
+# preview"), wider at the sides, where the card's text does not frame it.
+W, H, PAD_X, PAD_Y = 640, 360, 84, 54
 MAX_NODES = 220            # the best-linked pages of a bigger wiki
 ROUNDS = 90
 
@@ -130,9 +132,13 @@ def render(nodes: list[dict], links: list[dict]) -> str:
     xs, ys = [p[0] for p in pos.values()], [p[1] for p in pos.values()]
     x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
     # Fill the card: each axis scaled to the frame, the stretch kept under 1.9x.
-    sx = (W - 2 * PAD) / max(x1 - x0, 1e-6)
-    sy = (H - 2 * PAD) / max(y1 - y0, 1e-6)
+    sx = (W - 2 * PAD_X) / max(x1 - x0, 1e-6)
+    sy = (H - 2 * PAD_Y) / max(y1 - y0, 1e-6)
     sx, sy = min(sx, sy * 1.9), min(sy, sx * 1.9)
+    # A handful of pages sits in the middle rather than spread to the corners.
+    if len(nodes) < 12:
+        shrink = 0.45 + 0.55 * len(nodes) / 12
+        sx, sy = sx * shrink, sy * shrink
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
 
     def at(i: str) -> tuple[float, float]:
