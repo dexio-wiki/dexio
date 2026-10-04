@@ -1,44 +1,37 @@
-"""The Open Knowledge Format's review, source and status fields in a page's
-frontmatter (Forrest, 2026-10-04: "Let's do 1-3", after comparing Dexio with
-Google's OKF v0.2, github.com/GoogleCloudPlatform/open-knowledge-format):
+"""The Open Knowledge Format's source and status fields in a page's frontmatter
+(Forrest, 2026-10-04, after comparing Dexio with Google's OKF v0.2,
+github.com/GoogleCloudPlatform/open-knowledge-format):
 
-- `verified`, a list of review events ({by, at}), and the trust tier OKF derives
-  from it: unverified, machine-confirmed (only agents or processes), or
-  human-reviewed (a `human:<id>` actor). Dexio adds what a file cannot say on its
-  own: whether the page changed after its last review, from the page's own
-  last-change time.
 - `sources`, a list of {id, resource, title, author, last_modified, usage_count};
   a footnote whose label is a source's id cites it (OKF section 5.1). Plain
   strings are kept too, as the free-text source lists many wikis already write.
 - `status`: draft, stable or deprecated. No status means stable.
 
-`add_review` writes a person's review into `verified`, for the app's Mark
-reviewed. Only the YAML these fields need is read: plain and quoted scalars,
-flow lists and maps, and block lists and maps nested by indentation. Anything
-else is skipped and never an error: OKF says a page is never rejected for its
-frontmatter (section 11).
+Reviews (`verified`, its trust tiers and a Mark reviewed button) shipped the same
+day and were taken out again on Forrest's word: "this seems tedious. i'd like to
+roll back the human review feature." A page's `verified` lines stay in its text
+and are not read.
+
+Only the YAML these fields need is read: plain and quoted scalars, flow lists and
+maps, and block lists and maps nested by indentation. Anything else is skipped
+and never an error: OKF says a page is never rejected for its frontmatter
+(section 11).
 """
 from __future__ import annotations
 
-import datetime as _dt
 import json
 import re
 
 from .parse import _frontmatter_lines, keep_lines
 
 STATUSES = ("draft", "stable", "deprecated")
-HUMAN, PROCESS = "human:", "process:"
-# A page that changes this soon after its review was changed by the review.
-REVIEW_GRACE = 5.0
 MAX_SOURCES = 100
-MAX_REVIEWS = 50
 # Frontmatter past this is not read (a page's head; health.stale_after reads 20000).
 READ_CHARS = 20000
 
 # A mapping key and what follows its colon: a quoted key, or a plain one that
 # does not open a list item, a flow collection or a comment.
 _KEY = re.compile(r"""^(?:"([^"]*)"|'([^']*)'|([^\s#'"\[\]{},:-][^:#]*?|-[^\s:#][^:#]*?))[ \t]*:(?:[ \t]+|$)(.*)$""")
-_PLAIN_OK = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_:./@+\-]*$")
 
 
 # ---- reading ---------------------------------------------------------------
@@ -307,64 +300,10 @@ def fields(text: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def parse_time(value) -> float | None:
-    """An ISO 8601 date or datetime as Unix seconds; a date alone is that day's
-    start in UTC, as is a time with no offset."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return None
-    s = str(value or "").strip()
-    if not s:
-        return None
-    try:
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-            when = _dt.datetime.strptime(s, "%Y-%m-%d")
-        else:
-            when = _dt.datetime.fromisoformat(s.replace("Z", "+00:00").replace(" ", "T", 1))
-    except ValueError:
-        return None
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=_dt.timezone.utc)
-    return when.timestamp()
-
-
-def iso(ts: float) -> str:
-    return _dt.datetime.fromtimestamp(int(ts), _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def kind_of(actor: str) -> str:
-    """OKF's actor convention: human:<id>, process:<id>, or an agent's name."""
-    a = str(actor or "")
-    return "human" if a.startswith(HUMAN) else "process" if a.startswith(PROCESS) else "agent"
-
-
 def status(fm: dict) -> str | None:
     v = fm.get("status")
     s = str(v).strip().lower() if isinstance(v, str) else ""
     return s if s in STATUSES else None
-
-
-def reviews(fm: dict) -> list[dict]:
-    """`verified` as a list of {by, at (Unix seconds or None), kind}. A bare
-    mapping is a one-element list (OKF section 5.2)."""
-    v = fm.get("verified")
-    if isinstance(v, dict):
-        v = [v]
-    if not isinstance(v, list):
-        return []
-    out = []
-    for item in v[:MAX_REVIEWS]:
-        if isinstance(item, dict) and item.get("by") not in (None, ""):
-            by = str(item["by"]).strip()
-            out.append({"by": by, "at": parse_time(item.get("at")), "kind": kind_of(by)})
-        elif isinstance(item, str) and item.strip():
-            out.append({"by": item.strip(), "at": None, "kind": kind_of(item.strip())})
-    return out
-
-
-def tier(revs: list[dict]) -> str:
-    if any(r["kind"] == "human" for r in revs):
-        return "human-reviewed"
-    return "machine-confirmed" if revs else "unverified"
 
 
 def sources(fm: dict) -> list[dict]:
@@ -393,36 +332,8 @@ def sources(fm: dict) -> list[dict]:
     return out
 
 
-def generated(fm: dict) -> dict | None:
-    g = fm.get("generated")
-    if isinstance(g, dict) and g.get("by") not in (None, ""):
-        out: dict = {"by": str(g["by"]), "kind": kind_of(str(g["by"]))}
-        at = parse_time(g.get("at"))
-        if at is not None:
-            out["at"] = at
-        return out
-    return None
-
-
-def review_state(revs: list[dict], updated_at: float | None) -> dict | None:
-    """The page's review as the app and the MCP header show it: the tier, the
-    latest review of that tier, everyone who reviewed at that tier, and whether
-    the page changed after that review."""
-    if not revs:
-        return None
-    t = tier(revs)
-    best = [r for r in revs if (r["kind"] == "human") == (t == "human-reviewed")]
-    last = max(best, key=lambda r: r["at"] or 0)
-    out = {"tier": t, "by": last["by"], "at": last["at"],
-           "reviewers": list(dict.fromkeys(r["by"] for r in best))}
-    out["edited_since"] = bool(updated_at and last["at"] is not None
-                               and float(updated_at) > last["at"] + REVIEW_GRACE)
-    return out
-
-
-def summary(text: str, updated_at: float | None = None) -> dict:
-    """What the page says about itself, only the keys it has: status, review
-    (review_state), sources and generated."""
+def summary(text: str) -> dict:
+    """What the page says about itself, only the keys it has: status and sources."""
     fm = fields(text)
     if not fm:
         return {}
@@ -430,82 +341,7 @@ def summary(text: str, updated_at: float | None = None) -> dict:
     st = status(fm)
     if st:
         out["status"] = st
-    rv = review_state(reviews(fm), updated_at)
-    if rv:
-        out["review"] = rv
     src = sources(fm)
     if src:
         out["sources"] = src
-    gen = generated(fm)
-    if gen:
-        out["generated"] = gen
     return out
-
-
-# ---- writing ---------------------------------------------------------------
-
-def human_actor(name: str, fallback: str) -> str:
-    """human:<id> for a person, from their name: Forrest Zhang is human:forrest-zhang."""
-    slug = re.sub(r"[^\w]+", "-", str(name or "").lower(), flags=re.UNICODE).strip("-_")
-    return HUMAN + (slug or fallback)
-
-
-def _plain_or_quoted(v) -> str:
-    if isinstance(v, bool) or v is None:
-        return json.dumps(v)
-    if isinstance(v, (int, float)):
-        return str(v)
-    s = str(v)
-    return s if _PLAIN_OK.match(s) else json.dumps(s, ensure_ascii=False)
-
-
-def _flow_map(entry: dict) -> str:
-    return "{ " + ", ".join(f"{k}: {_plain_or_quoted(v)}" for k, v in entry.items()
-                            if not isinstance(v, (dict, list))) + " }"
-
-
-def _raw_entries(fm: dict) -> list[dict]:
-    v = fm.get("verified")
-    if isinstance(v, dict):
-        v = [v]
-    if not isinstance(v, list):
-        return []
-    out = []
-    for item in v:
-        if isinstance(item, dict) and item.get("by") not in (None, ""):
-            out.append(item)
-        elif isinstance(item, str) and item.strip():
-            out.append({"by": item.strip()})
-    return out
-
-
-def add_review(text: str, actor: str, at: float) -> str:
-    """The text with `actor` reviewing it at `at`: one `verified` entry per
-    reviewer, so the reviewer's earlier entry gives way to this one. `verified`
-    is rewritten as a block list of { by, at } entries, the rest of the
-    frontmatter left as written; a page with no frontmatter gets one."""
-    entry = {"by": actor, "at": iso(at)}
-    lines = keep_lines(text or "")
-    fm = _frontmatter_lines(lines)
-    if fm < 2:
-        return "---\nverified:\n  - " + _flow_map(entry) + "\n---\n" + (text or "")
-    kept = [e for e in _raw_entries(fields(text)) if str(e.get("by")).strip() != actor]
-    block = "verified:\n" + "".join(f"  - {_flow_map(e)}\n" for e in kept + [entry])
-    end = fm - 1                                    # the closing --- line
-    start = None
-    for i in range(1, end):
-        if re.match(r"^verified[ \t]*:", lines[i]):
-            start = i
-            break
-    if start is None:
-        before = lines[:end]
-        if before and not before[-1].endswith("\n"):
-            before[-1] += "\n"
-        return "".join(before) + block + "".join(lines[end:])
-    stop = start + 1
-    while stop < end and (not lines[stop].strip() or lines[stop][:1] in (" ", "\t")
-                          or lines[stop].startswith("- ")):
-        stop += 1
-    while stop > start + 1 and not lines[stop - 1].strip():
-        stop -= 1                                   # blank lines after it stay
-    return "".join(lines[:start]) + block + "".join(lines[stop:])

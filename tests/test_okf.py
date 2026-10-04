@@ -1,6 +1,7 @@
-"""The Open Knowledge Format's review, source and status fields (dexio/okf.py),
-in the page panel, the Mark reviewed button and the MCP tools (Forrest,
-2026-10-04: "Let's do 1-3" after comparing Dexio with Google's OKF v0.2)."""
+"""The Open Knowledge Format's source and status fields (dexio/okf.py), in the
+page panel and the MCP tools (Forrest, 2026-10-04, after comparing Dexio with
+Google's OKF v0.2). Reviews shipped the same day and were rolled back; a page's
+`verified` lines are left in its text and not read."""
 from __future__ import annotations
 
 import pytest
@@ -40,50 +41,23 @@ usage_window: { from: 2026-06-01T00:00:00Z, to: 2026-06-30T00:00:00Z }
 Recognized revenue.[^rev-policy]
 """
 
-T = okf.parse_time
-
 
 def test_reads_the_spec_example():
     fm = okf.fields(SPEC)
     assert fm["parameters"] == [{"name": "year", "type": "integer", "required": "true"}]
     assert fm["executor"] == {"resource": "references/skills/run-on-bq.md",
                               "receipt": ["job_id", "executed_sql", "result"]}
+    assert fm["verified"] == {"by": "human:ahormati", "at": "2026-06-25T09:00:00Z"}
     assert fm["usage_window"]["to"] == "2026-06-30T00:00:00Z"
-    said = okf.summary(SPEC, T("2026-06-25T09:00:01Z"))
+    said = okf.summary(SPEC)
+    assert set(said) == {"status", "sources"}, "reviews are not read"
     assert said["status"] == "stable"
-    assert said["review"] == {"tier": "human-reviewed", "by": "human:ahormati",
-                              "at": T("2026-06-25T09:00:00Z"), "reviewers": ["human:ahormati"],
-                              "edited_since": False}
     assert said["sources"][1] == {
         "resource": "https://developers.google.com/analytics/bigquery/export-schema",
         "id": "ga4-schema", "title": "GA4 BigQuery Export schema", "author": "team:ga4-docs",
         "last_modified": "2026-05-30T00:00:00Z", "usage_count": 5000}
-    assert said["generated"] == {"by": "reference_agent/gemini-2.5-pro", "kind": "agent",
-                                 "at": T("2026-06-20T22:53:05Z")}
-
-
-def test_trust_tiers_follow_the_actors():
-    def tier(v):
-        return okf.tier(okf.reviews(okf.fields(f"---\nverified: {v}\n---\n")))
-    assert tier("[]") == "unverified"
-    assert tier("{ by: niko, at: 2026-10-01 }") == "machine-confirmed"
-    assert tier("[{ by: process:nightly }, { by: niko }]") == "machine-confirmed"
-    assert tier("[{ by: niko }, { by: human:ann }]") == "human-reviewed"
     assert okf.summary("# no frontmatter\n") == {}
-    assert "review" not in okf.summary("---\ntitle: x\n---\n")
-
-
-def test_a_page_changed_after_its_review_says_so():
-    text = "---\nverified:\n  - { by: human:ann, at: 2026-10-01T00:00:00Z }\n---\n# A\n"
-    at = T("2026-10-01T00:00:00Z")
-    assert not okf.summary(text, at + 2)["review"]["edited_since"]       # the review's own write
-    assert okf.summary(text, at + 3600)["review"]["edited_since"]
-    # The latest human review counts; an agent's later check does not lift a human tier.
-    text2 = ("---\nverified:\n  - { by: human:ann, at: 2026-10-01T00:00:00Z }\n"
-             "  - { by: human:bo, at: 2026-10-03T00:00:00Z }\n  - { by: niko, at: 2026-10-04T00:00:00Z }\n---\n")
-    rv = okf.summary(text2, T("2026-10-03T00:00:01Z"))["review"]
-    assert rv["by"] == "human:bo" and rv["reviewers"] == ["human:ann", "human:bo"]
-    assert not rv["edited_since"]
+    assert okf.summary("---\ntitle: x\n---\n") == {}
 
 
 def test_status_is_one_of_three():
@@ -107,51 +81,24 @@ def test_free_text_sources_stay_whole():
     assert okf.summary("---\nsources:\n  - { id: a, title: no resource }\n---\n") == {}
 
 
+def test_block_lists_at_the_keys_indent_and_comments():
+    text = ("---\nsources:\n- id: a  # the first\n  resource: https://a.example\n\n"
+            "- plain one\ntags: [x, 'y, z']\n---\n")
+    fm = okf.fields(text)
+    assert fm["sources"] == [{"id": "a", "resource": "https://a.example"}, "plain one"]
+    assert fm["tags"] == ["x", "y, z"]
+
+
 @pytest.mark.parametrize("text", [
-    "---\nverified: [unclosed\n---\n",
+    "---\nsources: [unclosed\n---\n",
     "---\n- a list, not a mapping\n---\n",
-    "---\nverified:\n    - {by: x\n  junk: : :\n---\n",
+    "---\nsources:\n    - {resource: x\n  junk: : :\n---\n",
     "---\nsources: {\n---\n",
     "---\n\tstatus:\tdraft\n---\n",
     "---\nstatus: |\n  multi\n  line\n---\n",
 ])
 def test_odd_frontmatter_is_never_an_error(text):
-    okf.summary(text, 1.0)
-    okf.add_review(text, "human:ann", 1.0)
-
-
-def test_add_review_writes_one_entry_per_reviewer():
-    at1, at2 = T("2026-10-04T10:00:00Z"), T("2026-10-05T10:00:00Z")
-    once = okf.add_review(SPEC, "human:forrest-zhang", at1)
-    assert ("verified:\n  - { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n"
-            "  - { by: human:forrest-zhang, at: 2026-10-04T10:00:00Z }\nstale_after:") in once
-    assert once.replace("verified:\n  - { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n"
-                        "  - { by: human:forrest-zhang, at: 2026-10-04T10:00:00Z }\n",
-                        "verified: { by: human:ahormati, at: 2026-06-25T09:00:00Z }\n") == SPEC
-    twice = okf.add_review(once, "human:forrest-zhang", at2)
-    assert twice.count("human:forrest-zhang") == 1 and "2026-10-05T10:00:00Z" in twice
-    assert okf.summary(twice, at2)["review"]["reviewers"] == ["human:ahormati", "human:forrest-zhang"]
-
-
-def test_add_review_to_pages_without_verified_or_frontmatter():
-    at = T("2026-10-04T10:00:00Z")
-    assert okf.add_review("# Hello\n\nbody\n", "human:ann", at) == (
-        "---\nverified:\n  - { by: human:ann, at: 2026-10-04T10:00:00Z }\n---\n# Hello\n\nbody\n")
-    assert okf.add_review("---\ntitle: x\n\nstatus: draft\n---\n# Hello\n", "human:ann", at) == (
-        "---\ntitle: x\n\nstatus: draft\nverified:\n  - { by: human:ann, at: 2026-10-04T10:00:00Z }\n"
-        "---\n# Hello\n")
-    # A block list at the key's own indent, then a blank line and another key.
-    text = "---\nverified:\n- by: niko\n  at: 2026-10-01\n\ntags: [a]\n---\n"
-    out = okf.add_review(text, "human:ann", at)
-    assert out == ("---\nverified:\n  - { by: niko, at: 2026-10-01 }\n"
-                   "  - { by: human:ann, at: 2026-10-04T10:00:00Z }\n\ntags: [a]\n---\n")
-    assert okf.fields(out)["tags"] == ["a"]
-
-
-def test_human_actor_from_a_name():
-    assert okf.human_actor("Forrest Zhang", "member-1") == "human:forrest-zhang"
-    assert okf.human_actor(" ", "member-7") == "human:member-7"
-    assert okf.human_actor("Zoë O'Neil", "x") == "human:zoë-o-neil"
+    okf.summary(text)
 
 
 # ---- the app and the MCP tools ------------------------------------------------
@@ -169,6 +116,7 @@ sources:
     resource: https://example.com/policy
     title: Refund policy
   - Call with Jane, 2026-10-02
+verified: { by: human:ann-lee, at: 2026-10-04T16:00:00Z }
 ---
 # Refunds
 
@@ -182,85 +130,29 @@ def note(c, path, **q):
     return r.json()
 
 
-def review(c, path, version, **q):
-    return c.post("/api/v1/review" + (f"?w={q['w']}" if q.get("w") else ""),
-                  json={"path": path, "version": version})
-
-
-def owner(app, first="Ann", last="Lee"):
+def test_note_and_mcp_say_status_and_sources(app):
     c = browser(app)
-    assert signup(c, "ann@example.com", first=first).status_code == 303
-    app.state.conn.execute("UPDATE users SET last_name=? WHERE email=?", (last, "ann@example.com"))
-    app.state.conn.commit()
+    assert signup(c, "ann@example.com").status_code == 303
     key = token_from_connect(c)
-    return c, key
-
-
-def test_note_says_status_sources_and_review(app):
-    c, key = owner(app)
     assert mcp(app, key, "write_page", path="policies/refunds", text=PAGE).get("ok")
-    got = note(c, "policies/refunds")
-    said = got["info"]["okf"]
-    assert said["status"] == "draft" and "review" not in said
-    assert said["sources"] == [{"resource": "https://example.com/policy", "id": "policy",
-                                "title": "Refund policy"}, {"text": "Call with Jane, 2026-10-02"}]
-    assert got["version"]
-
-
-def test_mark_reviewed_records_the_person(app):
-    c, key = owner(app)
-    assert mcp(app, key, "write_page", path="policies/refunds", text=PAGE).get("ok")
-    got = note(c, "policies/refunds")
-    r = review(c, "policies/refunds", got["version"])
-    assert r.status_code == 200, r.text
-    out = r.json()
-    assert "  - { by: human:ann-lee, at: " in out["text"]
-    rv = out["info"]["okf"]["review"]
-    assert rv["tier"] == "human-reviewed" and rv["name"] == "Ann Lee" and rv["mine"]
-    assert not rv["edited_since"] and out["info"]["revisions"] == 2
-    # The review is a change of its own in the history, by the person.
-    revs = c.get("/api/v1/page-history", params={"project": "main", "path": "policies/refunds"}).json()
-    top = revs["revisions"][0]
-    assert top["op"] == "review" and top["note"] == "Marked reviewed" and top["agent"] == "Ann Lee"
-    # A later edit leaves the review standing but changed since.
-    app.state.conn.execute("UPDATE pages SET updated_at=updated_at+60 WHERE path=?",
-                           ("policies/refunds",))
-    app.state.conn.commit()
-    later = note(c, "policies/refunds")["info"]["okf"]["review"]
-    assert later["edited_since"] and later["mine"]
-    # The MCP tools say the same.
+    said = note(c, "policies/refunds")["info"]["okf"]
+    assert said == {"status": "draft", "sources": [
+        {"resource": "https://example.com/policy", "id": "policy", "title": "Refund policy"},
+        {"text": "Call with Jane, 2026-10-02"}]}
     head = mcp(app, key, "read_page", path="policies/refunds")
-    assert head["status"] == "draft"
-    assert head["review"]["tier"] == "human-reviewed" and head["review"]["by"] == "human:ann-lee"
-    assert head["review"]["edited_since"] is True
+    assert head["status"] == "draft" and "review" not in head
     listed = {p["path"]: p for p in mcp(app, key, "list_pages")["pages"]}
     assert listed["policies/refunds"]["status"] == "draft"
-    assert listed["policies/refunds"]["review"]["by"] == "human:ann-lee"
-    health = mcp(app, key, "wiki_health")
-    assert [d["path"] for d in health["changed_since_review"]] == ["policies/refunds"]
+    assert "review" not in listed["policies/refunds"]
+    assert "changed_since_review" not in mcp(app, key, "wiki_health")
+    # Mark reviewed is gone.
+    r = c.post("/api/v1/review", json={"path": "policies/refunds", "version": ""})
+    assert r.status_code in (404, 405)
 
 
-def test_a_page_changed_since_it_was_read_is_not_marked(app):
-    c, key = owner(app)
-    assert mcp(app, key, "write_page", path="a", text="# A\n\none\n").get("ok")
-    v = note(c, "a")["version"]
-    assert mcp(app, key, "write_page", path="a", text="# A\n\ntwo\n").get("ok")
-    r = review(c, "a", v)
-    assert r.status_code == 409 and "changed after you opened it" in r.json()["error"]
-    assert "verified" not in note(c, "a")["text"]
-    assert review(c, "nope", "").status_code == 404
-
-
-def test_only_members_mark_reviewed_and_guests_see_no_names(app):
+def test_guests_see_status_and_sources_too(app):
     c, key, handle = owner_with_wiki(app)
     assert mcp(app, key, "write_page", path="index", text=PAGE).get("ok")
-    assert review(c, "index", note(c, "index")["version"]).status_code == 200
     public(c, handle, "wiki", "")
-    anon = browser(app)
-    got = note(anon, "index", w=handle)
-    rv = got["info"]["okf"]["review"]
-    assert set(rv) == {"tier", "at", "edited_since"} and rv["tier"] == "human-reviewed"
-    assert review(anon, "index", got["version"], w=handle).status_code in (401, 403)
-    other = browser(app)
-    assert signup(other, "eve@example.com").status_code == 303
-    assert review(other, "index", got["version"], w=handle).status_code in (403, 404)
+    said = note(browser(app), "index", w=handle)["info"]["okf"]
+    assert said["status"] == "draft" and len(said["sources"]) == 2

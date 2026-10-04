@@ -1961,8 +1961,8 @@
   }
 
   // ---- what a page says about itself (okf.py) ----
-  // The Open Knowledge Format's status, sources and review in the page's
-  // frontmatter, which the server reads (Forrest, 2026-10-04: "Let's do 1-3").
+  // The Open Knowledge Format's status and sources in the page's frontmatter,
+  // which the server reads (Forrest, 2026-10-04).
   // A source as one line of markdown: its title linked to it when it is an
   // address or a path, then who wrote it and when it last changed.
   function sourceMd(s) {
@@ -2392,7 +2392,6 @@
     if (ticket !== opening) return;      // another page was opened, or it closed
     hist.text = note ? note.text : null;
     hist.info = note ? note.info : null;
-    hist.version = note ? note.version : "";
     showWhen(hist.info);
     if (hist.view !== "page") return;
     fillPage(n, ins, hist.text);
@@ -2410,7 +2409,7 @@
         window.DEXIO_PROJECT || "")}&path=${encodeURIComponent(n.id)}`));
       if (!r.ok) return null;
       const j = await r.json();
-      return { text: j.text || "", info: j.info || null, version: j.version || "" };
+      return { text: j.text || "", info: j.info || null };
     } catch (e) { return null; }
   }
 
@@ -2711,70 +2710,8 @@
         `${escapeHtml(DAY.format(at(c.at)))}${c.exact && whoName(c) ? " by " +
         escapeHtml(whoName(c)) : ""}</span>`);
     }
-    const rv = said.review;
-    if (rv) bits.push(reviewBit(rv));
-    if (canReview() && !(rv && rv.mine && rv.tier === "human-reviewed" && !rv.edited_since)) {
-      bits.push(`<button type="button" class="mark-reviewed" title="Record that you have read this ` +
-        `page and it is right">Mark reviewed</button>`);
-    }
     el.innerHTML = bits.join(" · ");
-    const btn = el.querySelector(".mark-reviewed");
-    if (btn) btn.onclick = () => markReviewed(btn);
     showCount(info.revisions);
-  }
-
-  // The page's review, in the words of the line around it: "Reviewed 2 days
-  // ago by Forrest Zhang", or "Checked" when only agents have checked it; a
-  // page changed after that review says so. A guest sees when, not who.
-  function reviewBit(rv) {
-    const human = rv.tier === "human-reviewed";
-    const who = rv.name ? ` by ${escapeHtml(rv.name)}` : "";
-    const when = rv.at ? ` ${escapeHtml(ago(rv.at))}` : "";
-    const others = (rv.reviewers || []).filter((r) => r !== rv.name);
-    const tip = (rv.at ? WHEN.format(at(rv.at)) : "") +
-      (others.length ? ` · also reviewed by ${others.join(", ")}` : "") +
-      (rv.edited_since ? " · the page has changed since" : "");
-    return `<span class="rv ${human ? "rv-human" : "rv-agent"}${rv.edited_since ? " rv-old" : ""}"` +
-      ` title="${escapeHtml(tip)}">${human ? "Reviewed" : "Checked"}${when}${who}` +
-      `${rv.edited_since ? ", changed since" : ""}</span>`;
-  }
-
-  // A member can mark the page reviewed; a guest or the static viewer cannot.
-  function canReview() {
-    return !!window.DEXIO_API && !GUEST && !!hist.n && hist.text !== null;
-  }
-
-  // Mark reviewed (okf.py, app.py review): the server adds the person to the
-  // page's `verified` frontmatter as a change of its own. It sends the
-  // version read, so a page that changed meanwhile is not marked unread.
-  async function markReviewed(btn) {
-    const n = hist.n;
-    btn.disabled = true;
-    btn.textContent = "Marking…";
-    let r = null, j = null;
-    try {
-      const q = new URLSearchParams({ project: window.DEXIO_PROJECT || "" });
-      r = await fetch(withW(`${window.DEXIO_API}/review?${q}`), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path: n.id, version: hist.version || "" }) });
-      j = await r.json().catch(() => null);
-    } catch (e) { r = null; }
-    if (hist.n !== n) return;                     // another page was opened meanwhile
-    if (!r || !r.ok || !j) {
-      btn.disabled = false;
-      btn.textContent = "Mark reviewed";
-      const msg = (j && j.error) || "The review was not saved. Try again.";
-      const note = document.createElement("span");
-      note.className = "rv-error";
-      note.setAttribute("role", "alert");
-      note.textContent = " " + msg;
-      btn.after(note);
-      return;
-    }
-    hist.text = j.text || "";
-    hist.info = j.info || null;
-    hist.version = j.version || "";
-    showWhen(hist.info);
   }
 
   function showCount(n) {
@@ -2861,7 +2798,10 @@
   }
 
   const OPS = { write: "Rewritten", edit: "Edited", append: "Appended", push: "Pushed",
-                move: "Links updated for a move", delete: "Deleted", review: "Marked reviewed" };
+                move: "Links updated for a move", delete: "Deleted",
+                // Mark reviewed was in the app for part of 2026-10-04 and then
+                // taken out; revisions it made keep their name.
+                review: "Marked reviewed" };
 
   // What a revision did, in words.
   function revWhat(r) {

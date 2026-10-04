@@ -34,10 +34,10 @@ const wrapped = src.replace(
   "window.dexio = { load, resize, select };",
   "window.dexio = { load, resize, select, renderMarkdown, resolveWikiLink, state, " +
   "buildTree, treeHtml, defaultExpanded, backlinks, rankedMatches, termPattern, " +
-  "matchedFolders, findRows, sourcesBlock, reviewBit };");
+  "matchedFolders, findRows, sourcesBlock };");
 new Function(wrapped)();
 const { renderMarkdown, state, buildTree, treeHtml, defaultExpanded, backlinks, rankedMatches, termPattern,
-        matchedFolders, findRows, sourcesBlock, reviewBit } = globalThis.window.dexio;
+        matchedFolders, findRows, sourcesBlock } = globalThis.window.dexio;
 
 // pretend these pages exist
 for (const id of ["entities/acme-corp", "index", "people/jane-doe"]) {
@@ -637,23 +637,6 @@ check("a source's title cannot break out of its link", () => {
   const html = sourcesBlock([{ resource: "https://e.com/a (b)", title: "x] <b>bold</b> [y" }], new Set(), "x");
   assert.ok(html.includes('href="https://e.com/a%20%28b%29"'), html);
   assert.ok(!html.includes("<b>bold"), html);
-});
-
-check("the review line says who, when, and whether the page changed since", () => {
-  const now = Date.now() / 1000;
-  const human = reviewBit({ tier: "human-reviewed", name: "Ann Lee", at: now - 7200, reviewers: ["Ann Lee", "Bo"],
-                            edited_since: false });
-  assert.match(human, /^<span class="rv rv-human" title="[^"]* · also reviewed by Bo">Reviewed [^<]+ by Ann Lee<\/span>$/);
-  const old = reviewBit({ tier: "human-reviewed", name: "Ann Lee", at: now - 7200, reviewers: ["Ann Lee"],
-                          edited_since: true });
-  assert.ok(old.includes('class="rv rv-human rv-old"') && old.endsWith("by Ann Lee, changed since</span>"), old);
-  const agent = reviewBit({ tier: "machine-confirmed", name: "niko", at: now - 60, reviewers: ["niko"] });
-  assert.match(agent, />Checked [^<]+ by niko</);
-  const guest = reviewBit({ tier: "human-reviewed", at: now - 7200, edited_since: false });
-  assert.match(guest, />Reviewed [^<]+<\/span>$/);
-  assert.ok(!guest.includes(" by "), guest);
-  const evil = reviewBit({ tier: "human-reviewed", name: "<img src=x>", at: now, reviewers: [] });
-  assert.ok(!evil.includes("<img"), evil);
 });
 
 console.log(failures ? `\n${failures} failing` : "\nall passing");

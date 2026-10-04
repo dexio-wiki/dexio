@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
@@ -409,41 +408,6 @@ def get_app(db_path: str | None = None) -> FastAPI:
         if not acc.member:
             raise HTTPException(403, f"{what} is for members of the workspace")
 
-    # ---- what a page says about itself (okf.py) ------------------------------
-    def my_actor(user: dict) -> str:
-        """The signed-in person as a reviewer: human:<their name>, as OKF writes it."""
-        first, last = auth.names(conn, user["id"])
-        return okf.human_actor(f"{first} {last}", f"member-{user['id']}")
-
-    def actor_names(workspace_id: int) -> dict[str, str]:
-        """human:<id> -> the member's name, for every member of the workspace."""
-        out = {}
-        for m in db.members(conn, workspace_id):
-            name = auth.display_name(m["first_name"] or "", m["last_name"] or "", m["email"])
-            out[okf.human_actor(f"{m['first_name'] or ''} {m['last_name'] or ''}",
-                                f"member-{m['id']}")] = name
-        return out
-
-    def page_okf(text: str, updated_at, acc: shares.Access, user: dict | None) -> dict:
-        """The page's status, review, sources and generated fields for the page
-        panel. A member sees reviewers by name (a human:<id> a member's name
-        matches becomes that name); a guest sees when, not who, as with history."""
-        meta = okf.summary(text, updated_at)
-        rv, gen = meta.get("review"), meta.get("generated")
-        if not acc.member:
-            if rv:
-                meta["review"] = {k: rv[k] for k in ("tier", "at", "edited_since")}
-            if gen:
-                meta["generated"] = {k: v for k, v in gen.items() if k != "by"}
-            return meta
-        if rv:
-            names = actor_names(acc.workspace_id)
-            shown = lambda a: names.get(a) or (a[len(okf.HUMAN):] if a.startswith(okf.HUMAN) else a)  # noqa: E731
-            me = my_actor(user) if user else None
-            meta["review"] = {**rv, "name": shown(rv["by"]), "mine": rv["by"] == me,
-                              "reviewers": [shown(a) for a in rv["reviewers"]]}
-        return meta
-
     @app.get(f"{API}/graph")
     def graph_(request: Request, response: Response, project: str = Query(default="")):
         _user, acc, k = reader(request)
@@ -460,7 +424,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
     @app.get(f"{API}/note")
     def note(request: Request, response: Response, project: str = Query(default=""),
              path: str = Query(...)):
-        user, acc, k = reader(request)
+        _user, acc, k = reader(request)
         row = db.note(conn, k, path) if acc.sees(path) else None
         if not row:
             raise HTTPException(404, "not found")
@@ -473,51 +437,11 @@ def get_app(db_path: str | None = None) -> FastAPI:
             c = info.get("created")
             info = {"exists": info["exists"], "updated_at": info["updated_at"],
                     "created": {"at": c["at"], "exact": c["exact"]} if c else None}
-        meta = page_okf(row["text"], row["updated_at"], acc, user)
+        # status and sources from its frontmatter (okf.py), for the page panel
+        meta = okf.summary(row["text"])
         if meta:
             info = {**info, "okf": meta}
-        return {**row, "version": db.version_of(row["text"]), "info": info}
-
-    @app.post(f"{API}/review")
-    async def review(request: Request, project: str = Query(default="")):
-        """Mark a page reviewed (Forrest, 2026-10-04): the signed-in member's entry
-        in its `verified` frontmatter, the Open Knowledge Format's review record
-        (okf.add_review), saved as a change of its own in the page's history.
-        `version` is the text the person read; a page that has changed since
-        is not marked, since they did not review what it says now."""
-        if not same_origin(request):
-            raise HTTPException(403, "cross-site request refused")
-        user, acc, k = reader(request)
-        members_only(acc, "Marking a page reviewed")
-        if not user:
-            raise HTTPException(403, "Marking a page reviewed is for members of the workspace")
-        why = db.read_only_reason(conn, acc.workspace_id)
-        if why:
-            raise HTTPException(403, why)
-        f = await json_or_form(request)
-        f = f if isinstance(f, dict) else {}
-        path, version = str(f.get("path") or ""), str(f.get("version") or "")
-        first, last = auth.names(conn, user["id"])
-        with db.LOCK:
-            pages_ = db.PageSet(conn, k)
-            if not path or path not in pages_:
-                raise HTTPException(404, "not found")
-            page = pages_[path]
-            if version and db.version_of(page.text) != version:
-                raise HTTPException(409, "This page changed after you opened it. Read the new"
-                                         " version, then mark it reviewed.")
-            pages_[path] = db.make_page(path, okf.add_review(page.text, my_actor(user), time.time()),
-                                        page.file)
-            db.apply_changes(conn, k, pages_.changes, source="app", op="review",
-                             note="Marked reviewed",
-                             agent=auth.display_name(first, last, user["email"]),
-                             user_id=user["id"])
-        row = db.note(conn, k, path)
-        if not row:
-            raise HTTPException(404, "not found")
-        info = {**page_history.page_info(conn, k, path, row),
-                "okf": page_okf(row["text"], row["updated_at"], acc, user)}
-        return {**row, "version": db.version_of(row["text"]), "info": info}
+        return {**row, "info": info}
 
     @app.get(f"{API}/page-history")
     def page_history_(request: Request, project: str = Query(default=""), path: str = Query(...),
