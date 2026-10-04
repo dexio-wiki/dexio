@@ -45,7 +45,7 @@ from mcp_types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, WithJsonSchema
 
 from .. import VERSION
-from .. import health
+from .. import health, okf
 from .. import search as wordsearch
 from ..parse import (MDLINK, WIKILINK, Page, _normalise, _resolve, basename, find_section,
                      keep_lines, line_slice, mask_code, page_links, replace_lines, resolve_keys)
@@ -101,15 +101,22 @@ When to use it:
 - Cite a source with a footnote: [^1] after the claim, and a line "[^1]: the source, with
   its link" anywhere on the page. The page shows the citation as [1] and lists the notes
   at its end.
+- A page can say how far to trust it in its frontmatter, with the Open Knowledge Format's
+  fields: status (draft, stable or deprecated); sources, a list of { id, resource, title },
+  where a footnote labelled with a source's id, [^id], cites it; and verified, the reviews.
+  A person marks a page reviewed in the app, which adds { by: human:<name>, at } to
+  verified; never write a human: entry yourself. After checking a page against its
+  sources you may add { by: <your agent name>, at: <now, ISO 8601> }.
 - Leave out small talk, one-off lookups, unfinished drafts, secrets, and anything the user
   asks you to keep out of the wiki.
 
 Find things: list_pages (a one-line description of each page, 200 at a time;
 optionally one folder), search_pages (every word of the query, best matches first, "quotes" for an exact
 phrase, or a regex; matching lines with their line numbers), read_page (a JSON header with
-version and links, then the markdown as plain text; outline, section, or offset and limit
-read part of a long page). wiki_health finds links that point nowhere, pages that may be
-out of date, pages named without a link, and pages long enough to split.
+version, links, status and review, then the markdown as plain text; outline, section, or
+offset and limit read part of a long page). wiki_health finds links that point nowhere,
+pages that may be out of date, pages changed since a person reviewed them, pages named
+without a link, and pages long enough to split.
 
 Change things: edit_page replaces an exact string or a whole section (the usual way to change
 part of a page), append_page adds to the end (logs), write_page creates or replaces a whole
@@ -244,6 +251,18 @@ def _check_size(text: str) -> dict:
         return {"bytes": n, "warning": f"page is {_mb(n)} of the {_mb(MAX_PAGE_BYTES)} limit;"
                                        " split it, or start a new page for new entries"}
     return {}
+
+
+def _review_out(rv: dict | None) -> dict | None:
+    """okf.review_state for an agent: times as ISO 8601, the edit flag only when set."""
+    if not rv:
+        return None
+    out = {"tier": rv["tier"], "by": rv["by"], "at": _iso(rv["at"]) if rv["at"] else ""}
+    if len(rv["reviewers"]) > 1:
+        out["reviewers"] = rv["reviewers"]
+    if rv["edited_since"]:
+        out["edited_since"] = True
+    return out
 
 
 def _check_base(pages: dict[str, Page], path: str, base_version: str | None) -> None:
@@ -461,16 +480,24 @@ def build_mcp(conn) -> MCPServer:
         index = mention_index(k)
         per_page = {}
         meta = []
+        review_due = []
         for r in rows:
             text = r["text"] or ""
             meta.append({"path": r["path"], "updated_at": r["updated_at"],
                          "stale_after": health.stale_after(text)})
+            if text.startswith("---"):
+                rv = okf.summary(text, r["updated_at"]).get("review")
+                if rv and rv["tier"] == "human-reviewed" and rv["edited_since"]:
+                    review_due.append({"path": r["path"], "reviewed_by": rv["by"],
+                                       "reviewed": _iso(rv["at"]), "updated": _iso(r["updated_at"])})
             found = index.find(text[:MENTION_SCAN_BYTES], r["path"], linked.get(r["path"], set()),
                                limit=50)
             if found:
                 per_page[r["path"]] = found
         stale = health.stale_pages(meta, edges, time.time(), stale_days)
+        review_due.sort(key=lambda d: (d["reviewed"], d["path"]))
         return {"stale_days": stale_days, "stale": stale[:MAX_STALE_LISTED],
+                "changed_since_review": review_due[:MAX_STALE_LISTED],
                 "unlinked_mentions": health.mention_summary(per_page)}
 
     def change(row, wiki: str, op, fn, note: str | None, agent: str) -> tuple[dict, dict]:
@@ -728,6 +755,10 @@ def build_mcp(conn) -> MCPServer:
             p = {"path": r["path"], "title": r["title"]}
             if r["description"]:
                 p["description"] = r["description"]
+            if r.get("status") and r["status"] != "stable":
+                p["status"] = r["status"]
+            if r.get("review"):
+                p["review"] = _review_out(r["review"])
             p.update(words=r["words"], updated=_iso(r["updated_at"]))
             pages.append(p)
         out = {"folder": prefix, "count": len(paths), "pages": pages}
@@ -759,9 +790,10 @@ def build_mcp(conn) -> MCPServer:
                     stale_days: int = health.STALE_DAYS) -> dict:
         """Check the wiki: broken links (the only problems), and as information: missing
         pages most linked to (wanted), pages that may be stale (past their stale_after
-        date, or unchanged stale_days while pages they link to changed), pages named
-        without a link (unlinked_mentions), pages over long_page_words, the most linked
-        pages, and pages with no links."""
+        date, or unchanged stale_days while pages they link to changed), pages changed
+        since a person reviewed them (changed_since_review), pages named without a link
+        (unlinked_mentions), pages over long_page_words, the most linked pages, and pages
+        with no links."""
         row = caller(ctx)
         k = the_wiki(row)
         proj = conn.execute("SELECT updated_at FROM projects WHERE name=?", (k,)).fetchone()
@@ -817,6 +849,11 @@ def build_mcp(conn) -> MCPServer:
                     "version": db.version_of(text), "updated": _iso(page["updated_at"]),
                     "links_out": links_out, "links_in": links_in,
                     "broken_links": broken_from(k, p)}
+            said = okf.summary(text, page["updated_at"]) if text.startswith("---") else {}
+            if said.get("status"):
+                meta["status"] = said["status"]
+            if said.get("review"):
+                meta["review"] = _review_out(said["review"])
         total = len(keep_lines(text))
         meta["total_lines"] = total
         heads = page_outline(text)

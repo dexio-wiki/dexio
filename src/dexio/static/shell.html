@@ -649,6 +649,38 @@ __THEME_HEAD__
   #panel .page-retry:hover { background: var(--btn-fill-hover); border-color: var(--btn-line-hover); }
   #panel .page-retry:active { background: var(--btn-fill-press); }
 
+  /* ---- what a page says about itself (graph.js, okf.py) ----
+     The Open Knowledge Format's fields in its frontmatter (Forrest,
+     2026-10-04): a draft or deprecated page says so at the start of the line
+     under the title, a reviewed page says who reviewed it and when, and a
+     member can mark it reviewed there. A deprecated page also opens with a
+     note, and sources no footnote cites are listed above "Linked from". */
+  #panel .pg-status {
+    display: inline-block; padding: 0 6px; border: 1px solid var(--line); border-radius: 6px;
+    color: var(--text); font-size: 11.5px; font-weight: 600; line-height: 17px;
+  }
+  #panel .pg-deprecated { color: var(--bad-text);
+                          border-color: color-mix(in srgb, var(--bad-text) 45%, transparent); }
+  #panel .rv-human:not(.rv-old)::before { content: "✓ "; color: var(--good-text); font-weight: 600; }
+  #panel .rv-old { font-style: italic; }
+  #panel .mark-reviewed {
+    min-height: 0; padding: 0 8px; border: 1px solid var(--btn-line); border-radius: 8px;
+    background: var(--panel); color: var(--text); font: inherit; font-size: 12px;
+    font-weight: 600; line-height: 18px; cursor: pointer;
+    transition: background .12s ease, border-color .12s ease;
+  }
+  #panel .mark-reviewed:hover { background: var(--btn-fill-hover); border-color: var(--btn-line-hover); }
+  #panel .mark-reviewed:active { background: var(--btn-fill-press); }
+  #panel .mark-reviewed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #panel .mark-reviewed:disabled { opacity: .5; cursor: default; }
+  #panel .rv-error { color: var(--bad-text); }
+  #panel .page-notice {
+    margin: 0 0 14px; padding: 8px 12px; border: 1px solid var(--line);
+    border-left: 3px solid var(--bad-text); border-radius: 6px; background: var(--sunken);
+    font-size: 13.5px; line-height: 1.5;
+  }
+  #panel .page-sources .src { display: block; }
+
   /* ---- history (graph.js, "history") ----
      Under the meta line, when the page was last edited and created. The
      Page / History tabs are the pinned head's bottom row, its rule their

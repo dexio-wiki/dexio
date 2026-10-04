@@ -1412,8 +1412,10 @@ def _folder_where(folder: str) -> tuple[str, tuple]:
 def page_list(conn, project: str, folder: str = "", limit: int | None = None,
               offset: int = 0) -> list[dict]:
     """A wiki's pages (or one folder's) in path order, each with its one-line
-    description (parse.description_of), read from the top of the page only.
+    description (parse.description_of) and what its frontmatter says of its
+    status and review (okf.summary), read from the top of the page only.
     limit and offset take one slice of that order."""
+    from .. import okf
     from ..parse import DESCRIPTION_SOURCE, description_of
     where, args = _folder_where(folder)
     sql = (f"SELECT path, title, words, updated_at, substr(text, 1, {int(DESCRIPTION_SOURCE)}) AS head"
@@ -1426,7 +1428,11 @@ def page_list(conn, project: str, folder: str = "", limit: int | None = None,
     out = []
     for r in rows:
         d = dict(r)
-        d["description"] = description_of(d.pop("head") or "")
+        head = d.pop("head") or ""
+        d["description"] = description_of(head)
+        meta = okf.summary(head, d["updated_at"]) if head.startswith("---") else {}
+        d["status"] = meta.get("status")
+        d["review"] = meta.get("review")
         out.append(d)
     return out
 

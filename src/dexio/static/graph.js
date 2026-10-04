@@ -1602,7 +1602,7 @@
     const flush = () => { while (k < notes.order.length) items.push(noteItem(notes.order[k++], from)); };
     flush();
     for (const def of notes.defs) {
-      if (def.n) continue;
+      if (def.n || def.source) continue;   // an uncited source is listed under Sources
       def.n = notes.order.length + 1;
       notes.order.push(def);
       flush();
@@ -1930,7 +1930,11 @@
     return h && h[1].trim() === String(title).trim() ? lines.slice(i + 1) : lines;
   }
 
-  function renderMarkdown(src, from, title) {
+  // sources: the page's frontmatter sources (okf.py), when the server sent
+  // them. A footnote labelled with a source's id cites it, as the Open
+  // Knowledge Format has it (Forrest, 2026-10-04): with no "[^id]: ..." line
+  // of the page's own, the note is the source. `cited` collects the ids cited.
+  function renderMarkdown(src, from, title, sources, cited) {
     const taken = takeNotes(dropTitle(
       stripComments(stripFrontMatter(String(src || ""))).split(/\r?\n/), title));
     const byLabel = new Map();
@@ -1938,14 +1942,54 @@
       def.n = 0; def.refs = 0;
       if (!byLabel.has(def.label)) byLabel.set(def.label, def);   // the first wins
     }
+    for (const s of sources || []) {
+      const label = s.id ? String(s.id).toLowerCase() : "";
+      if (!label || byLabel.has(label)) continue;               // the page's own note wins
+      const def = { label, paras: [sourceMd(s)], n: 0, refs: 0, source: s };
+      byLabel.set(label, def);
+      taken.defs.push(def);
+    }
     const outer = notes;
     notes = { defs: taken.defs, byLabel, order: [] };
     try {
       const body = renderBlocks(taken.body, from), list = renderNotes(from);
+      if (cited) for (const def of taken.defs) if (def.source && def.refs) cited.add(def.label);
       return list ? body + "\n" + list : body;
     } finally {
       notes = outer;
     }
+  }
+
+  // ---- what a page says about itself (okf.py) ----
+  // The Open Knowledge Format's status, sources and review in the page's
+  // frontmatter, which the server reads (Forrest, 2026-10-04: "Let's do 1-3").
+  // A source as one line of markdown: its title linked to it when it is an
+  // address or a path, then who wrote it and when it last changed.
+  function sourceMd(s) {
+    if (s.text) return String(s.text);
+    const res = String(s.resource || "");
+    const label = String(s.title || res).replace(/[[\]]/g, "");
+    const linkable = /^https?:\/\//i.test(res) || (!/\s/.test(res) && /[/.]/.test(res));
+    const href = res.replace(/[()\s]/g, (c) => ({ "(": "%28", ")": "%29" })[c] || "%20");
+    let md = linkable ? `[${label}](${href})` : label;
+    if (s.author) md += ` · ${s.author}`;
+    const t = s.last_modified ? Date.parse(s.last_modified) : NaN;
+    if (!isNaN(t)) md += ` · updated ${dayOf(t / 1000)}`;
+    return md;
+  }
+
+  // The sources no footnote cites, after the text, as "Linked from" is.
+  function sourcesBlock(sources, cited, from) {
+    const rest = (sources || []).filter((s) => !(s.id && cited.has(String(s.id).toLowerCase())));
+    if (!rest.length) return "";
+    return `<section class="links backlinks page-sources" aria-label="Sources"><b>Sources</b>` +
+      rest.map((s) => `<div class="src">${inline(sourceMd(s), from)}</div>`).join("") + `</section>`;
+  }
+
+  // The open page's okf fields, once its text has come (null before, and in
+  // the static viewer, which has no server to read them).
+  function pageMeta(n) {
+    return (n && hist.n && hist.n.id === n.id && hist.info && hist.info.okf) || null;
   }
 
   // used: heading anchors so far, shared with the blocks inside list items;
@@ -2348,6 +2392,7 @@
     if (ticket !== opening) return;      // another page was opened, or it closed
     hist.text = note ? note.text : null;
     hist.info = note ? note.info : null;
+    hist.version = note ? note.version : "";
     showWhen(hist.info);
     if (hist.view !== "page") return;
     fillPage(n, ins, hist.text);
@@ -2365,7 +2410,7 @@
         window.DEXIO_PROJECT || "")}&path=${encodeURIComponent(n.id)}`));
       if (!r.ok) return null;
       const j = await r.json();
-      return { text: j.text || "", info: j.info || null };
+      return { text: j.text || "", info: j.info || null, version: j.version || "" };
     } catch (e) { return null; }
   }
 
@@ -2378,8 +2423,15 @@
     `</div>`;
 
   function pageBody(n, body, ins) {
-    return (body ? `<article class="md">${renderMarkdown(body, n.id, n.title)}</article>` : "") +
-      backlinks(ins);
+    const meta = pageMeta(n), cited = new Set();
+    const sources = meta && meta.sources;
+    const text = body ? renderMarkdown(body, n.id, n.title, sources, cited) : "";
+    // Kept for links and history, no longer current: OKF's deprecated.
+    const old = meta && meta.status === "deprecated"
+      ? `<p class="page-notice" role="note">This page is deprecated. It is kept for its links and ` +
+        `history and is no longer current.</p>` : "";
+    return old + (text ? `<article class="md">${text}</article>` : "") +
+      sourcesBlock(sources, cited, n.id) + backlinks(ins);
   }
 
   // body null: the text is on its way, so the placeholder stands in for it.
@@ -2559,13 +2611,18 @@
   const HIST_PAGE = 50;
 
   const at = (s) => new Date(s * 1000);
+  // A day as the reader's calendar has it; a time of exactly midnight UTC is
+  // a date someone wrote without a time (2026-09-12 in a page's frontmatter),
+  // so it stays that date rather than the evening before west of Greenwich.
+  const DAY_UTC = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" });
+  const dayOf = (s) => (s % 86400 === 0 ? DAY_UTC : DAY).format(at(s));
   const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many || one + "s"}`;
   const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
   // "just now", "3 hours ago", "yesterday"; the date once it is a month old
   function ago(s) {
     const d = Date.now() / 1000 - s;
-    if (!REL || d > 30 * 86400) return `on ${DAY.format(at(s))}`;
+    if (!REL || d > 30 * 86400) return `on ${dayOf(s)}`;
     if (d < 60) return "just now";
     for (const [unit, secs] of [["day", 86400], ["hour", 3600], ["minute", 60]]) {
       if (d >= secs) return REL.format(-Math.floor(d / secs), unit);
@@ -2634,6 +2691,12 @@
     const el = panel.querySelector(".meta-when");
     if (!el || !info) return;
     const bits = [];
+    const said = info.okf || {};
+    // A draft or a deprecated page says so first (OKF's status; stable,
+    // the default, says nothing).
+    if (said.status === "draft" || said.status === "deprecated") {
+      bits.push(`<span class="pg-status pg-${said.status}">${cap(said.status)}</span>`);
+    }
     if (info.updated_at) {
       const by = info.updated_by && whoName(info.updated_by);
       bits.push(`<span title="${escapeHtml(WHEN.format(at(info.updated_at)) +
@@ -2648,8 +2711,70 @@
         `${escapeHtml(DAY.format(at(c.at)))}${c.exact && whoName(c) ? " by " +
         escapeHtml(whoName(c)) : ""}</span>`);
     }
+    const rv = said.review;
+    if (rv) bits.push(reviewBit(rv));
+    if (canReview() && !(rv && rv.mine && rv.tier === "human-reviewed" && !rv.edited_since)) {
+      bits.push(`<button type="button" class="mark-reviewed" title="Record that you have read this ` +
+        `page and it is right">Mark reviewed</button>`);
+    }
     el.innerHTML = bits.join(" · ");
+    const btn = el.querySelector(".mark-reviewed");
+    if (btn) btn.onclick = () => markReviewed(btn);
     showCount(info.revisions);
+  }
+
+  // The page's review, in the words of the line around it: "Reviewed 2 days
+  // ago by Forrest Zhang", or "Checked" when only agents have checked it; a
+  // page changed after that review says so. A guest sees when, not who.
+  function reviewBit(rv) {
+    const human = rv.tier === "human-reviewed";
+    const who = rv.name ? ` by ${escapeHtml(rv.name)}` : "";
+    const when = rv.at ? ` ${escapeHtml(ago(rv.at))}` : "";
+    const others = (rv.reviewers || []).filter((r) => r !== rv.name);
+    const tip = (rv.at ? WHEN.format(at(rv.at)) : "") +
+      (others.length ? ` · also reviewed by ${others.join(", ")}` : "") +
+      (rv.edited_since ? " · the page has changed since" : "");
+    return `<span class="rv ${human ? "rv-human" : "rv-agent"}${rv.edited_since ? " rv-old" : ""}"` +
+      ` title="${escapeHtml(tip)}">${human ? "Reviewed" : "Checked"}${when}${who}` +
+      `${rv.edited_since ? ", changed since" : ""}</span>`;
+  }
+
+  // A member can mark the page reviewed; a guest or the static viewer cannot.
+  function canReview() {
+    return !!window.DEXIO_API && !GUEST && !!hist.n && hist.text !== null;
+  }
+
+  // Mark reviewed (okf.py, app.py review): the server adds the person to the
+  // page's `verified` frontmatter as a change of its own. It sends the
+  // version read, so a page that changed meanwhile is not marked unread.
+  async function markReviewed(btn) {
+    const n = hist.n;
+    btn.disabled = true;
+    btn.textContent = "Marking…";
+    let r = null, j = null;
+    try {
+      const q = new URLSearchParams({ project: window.DEXIO_PROJECT || "" });
+      r = await fetch(withW(`${window.DEXIO_API}/review?${q}`), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: n.id, version: hist.version || "" }) });
+      j = await r.json().catch(() => null);
+    } catch (e) { r = null; }
+    if (hist.n !== n) return;                     // another page was opened meanwhile
+    if (!r || !r.ok || !j) {
+      btn.disabled = false;
+      btn.textContent = "Mark reviewed";
+      const msg = (j && j.error) || "The review was not saved. Try again.";
+      const note = document.createElement("span");
+      note.className = "rv-error";
+      note.setAttribute("role", "alert");
+      note.textContent = " " + msg;
+      btn.after(note);
+      return;
+    }
+    hist.text = j.text || "";
+    hist.info = j.info || null;
+    hist.version = j.version || "";
+    showWhen(hist.info);
   }
 
   function showCount(n) {
@@ -2736,7 +2861,7 @@
   }
 
   const OPS = { write: "Rewritten", edit: "Edited", append: "Appended", push: "Pushed",
-                move: "Links updated for a move", delete: "Deleted" };
+                move: "Links updated for a move", delete: "Deleted", review: "Marked reviewed" };
 
   // What a revision did, in words.
   function revWhat(r) {
@@ -3575,10 +3700,13 @@
       toc.heads.push({ el: h, id, lvl, text });
     }
     if (!loading) panel.classList.toggle("has-toc", toc.heads.length > 0);
-    const back = panel.querySelector(".panel-body > .backlinks");
-    if (back) {
-      back.id = "s--linked-from";
-      toc.heads.push({ el: back, id: back.id, lvl: 0, text: "Linked from" });
+    // The lists under the text: the sources no note cites, then backlinks.
+    for (const [sel, id, text] of [[".panel-body > .page-sources", "s--sources", "Sources"],
+                                   [".panel-body > nav.backlinks", "s--linked-from", "Linked from"]]) {
+      const el = panel.querySelector(sel);
+      if (!el) continue;
+      el.id = id;
+      toc.heads.push({ el, id, lvl: 0, text });
     }
     // subsections sit under their section; one that comes before any
     // section is listed on its own

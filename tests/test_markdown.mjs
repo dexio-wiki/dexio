@@ -34,10 +34,10 @@ const wrapped = src.replace(
   "window.dexio = { load, resize, select };",
   "window.dexio = { load, resize, select, renderMarkdown, resolveWikiLink, state, " +
   "buildTree, treeHtml, defaultExpanded, backlinks, rankedMatches, termPattern, " +
-  "matchedFolders, findRows };");
+  "matchedFolders, findRows, sourcesBlock, reviewBit };");
 new Function(wrapped)();
 const { renderMarkdown, state, buildTree, treeHtml, defaultExpanded, backlinks, rankedMatches, termPattern,
-        matchedFolders, findRows } = globalThis.window.dexio;
+        matchedFolders, findRows, sourcesBlock, reviewBit } = globalThis.window.dexio;
 
 // pretend these pages exist
 for (const id of ["entities/acme-corp", "index", "people/jane-doe"]) {
@@ -590,6 +590,70 @@ check("an address already in a link, or in code, is not linked again", () => {
   const html = renderMarkdown("[https://example.com](https://example.com) and `https://example.com/code`", "x");
   assert.equal((html.match(/<a /g) || []).length, 1, html);
   assert.ok(html.includes("<code>https://example.com/code</code>"));
+});
+
+console.log("what a page says about itself (okf.py)");
+
+const SOURCES = [
+  { id: "policy", resource: "https://example.com/policy", title: "Refund policy", author: "team:legal",
+    last_modified: "2026-05-30T00:00:00Z" },
+  { id: "unused", resource: "people/jane-doe", title: "Call with Jane" },
+  { resource: "all queries in project X" },
+  { text: "Interview, 2026-10-02, https://example.com/i" },
+];
+
+check("a footnote labelled with a source's id cites the source", () => {
+  const cited = new Set();
+  const html = renderMarkdown("---\nsources: []\n---\nRefunds take 14 days.[^policy] Also[^1].\n\n[^1]: A note.",
+    "x", "", SOURCES, cited);
+  assert.ok(!html.includes("sources:"), "the frontmatter is not shown");
+  assert.match(html, /<sup class="fn-ref" id="fnref-1"><a href="#fn-1" data-fn="fn-1" title="Refund policy \(https:\/\/example\.com\/policy\) · team:legal · updated [^"]+">1<\/a><\/sup>/);
+  assert.match(html, /<li id="fn-1"><a href="https:\/\/example\.com\/policy"[^>]*>Refund policy<\/a> · team:legal · updated /);
+  assert.ok(html.includes("updated May 30, 2026"), "a date written without a time stays that date in any time zone");
+  assert.ok(html.includes('<li id="fn-2">A note.'), html);
+  assert.ok(!html.includes("Call with Jane"), "an uncited source is not a note");
+  assert.deepEqual([...cited], ["policy"]);
+});
+
+check("the page's own note wins over a source with the same id", () => {
+  const cited = new Set();
+  const html = renderMarkdown("Claim[^policy].\n\n[^policy]: Our own words.", "x", "", SOURCES, cited);
+  assert.ok(html.includes('<li id="fn-1">Our own words.'), html);
+  assert.equal(cited.size, 0);
+});
+
+check("sources no footnote cites are listed under Sources", () => {
+  const html = sourcesBlock(SOURCES, new Set(["policy"]), "x");
+  assert.ok(html.startsWith('<section class="links backlinks page-sources" aria-label="Sources"><b>Sources</b>'), html);
+  assert.ok(!html.includes("Refund policy"), "a cited source is in the notes instead");
+  assert.match(html, /<div class="src"><a [^>]*>Call with Jane<\/a><\/div>/);
+  assert.ok(html.includes('<div class="src">all queries in project X</div>'), "a scope is text, not a link");
+  assert.match(html, /Interview, 2026-10-02, <a href="https:\/\/example\.com\/i"/);
+  assert.equal(sourcesBlock(SOURCES.slice(0, 1), new Set(["policy"]), "x"), "");
+  assert.equal(sourcesBlock(undefined, new Set(), "x"), "");
+});
+
+check("a source's title cannot break out of its link", () => {
+  const html = sourcesBlock([{ resource: "https://e.com/a (b)", title: "x] <b>bold</b> [y" }], new Set(), "x");
+  assert.ok(html.includes('href="https://e.com/a%20%28b%29"'), html);
+  assert.ok(!html.includes("<b>bold"), html);
+});
+
+check("the review line says who, when, and whether the page changed since", () => {
+  const now = Date.now() / 1000;
+  const human = reviewBit({ tier: "human-reviewed", name: "Ann Lee", at: now - 7200, reviewers: ["Ann Lee", "Bo"],
+                            edited_since: false });
+  assert.match(human, /^<span class="rv rv-human" title="[^"]* · also reviewed by Bo">Reviewed [^<]+ by Ann Lee<\/span>$/);
+  const old = reviewBit({ tier: "human-reviewed", name: "Ann Lee", at: now - 7200, reviewers: ["Ann Lee"],
+                          edited_since: true });
+  assert.ok(old.includes('class="rv rv-human rv-old"') && old.endsWith("by Ann Lee, changed since</span>"), old);
+  const agent = reviewBit({ tier: "machine-confirmed", name: "niko", at: now - 60, reviewers: ["niko"] });
+  assert.match(agent, />Checked [^<]+ by niko</);
+  const guest = reviewBit({ tier: "human-reviewed", at: now - 7200, edited_since: false });
+  assert.match(guest, />Reviewed [^<]+<\/span>$/);
+  assert.ok(!guest.includes(" by "), guest);
+  const evil = reviewBit({ tier: "human-reviewed", name: "<img src=x>", at: now, reviewers: [] });
+  assert.ok(!evil.includes("<img"), evil);
 });
 
 console.log(failures ? `\n${failures} failing` : "\nall passing");
