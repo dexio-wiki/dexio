@@ -59,6 +59,10 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
 );
 CREATE INDEX IF NOT EXISTS oauth_tokens_grant ON oauth_tokens(grant_id);
 CREATE INDEX IF NOT EXISTS oauth_tokens_ws ON oauth_tokens(workspace_id, client_id);
+CREATE TABLE IF NOT EXISTS oauth_reach (
+  workspace_id INTEGER NOT NULL, user_id INTEGER NOT NULL, client_id TEXT NOT NULL,
+  created_at REAL NOT NULL, PRIMARY KEY (workspace_id, user_id, client_id)
+);
 """
 
 
@@ -89,16 +93,22 @@ def access_row(conn, token: str) -> dict | None:
         # Membership can be removed after consent; the token dies with it.
         if not db.role_in(conn, row["workspace_id"], row["user_id"]):
             return None
+        reach = conn.execute("SELECT 1 FROM oauth_reach WHERE workspace_id=? AND user_id=? AND"
+                             " client_id=?", (row["workspace_id"], row["user_id"],
+                                              row["client_id"])).fetchone()
         with conn:
             conn.execute("UPDATE oauth_tokens SET last_used=? WHERE token_hash=?",
                          (now, row["token_hash"]))
     name = json.loads(row["info"]).get("client_name") or "OAuth app"
     return {"id": None, "name": f"{name} (OAuth)", "project": None,
-            "workspace_id": row["workspace_id"], "user_id": row["user_id"]}
+            "workspace_id": row["workspace_id"], "user_id": row["user_id"],
+            "shared_reach": 1 if reach else None}
 
 
-def connections(conn, workspace_id: int) -> list[dict]:
-    """Apps signed in to a workspace: one row per client with a live grant."""
+def connections(conn, workspace_id: int, user_id: int | None = None) -> list[dict]:
+    """Apps signed in to a workspace: one row per client with a live grant.
+    With user_id: whether that person is one of those signed in (mine), and
+    whether their sign-in reads what is shared with them (reach)."""
     now = time.time()
     rows = conn.execute(
         "SELECT t.client_id, c.info, MIN(t.created_at) AS since, MAX(t.last_used) AS last_used"
@@ -107,9 +117,37 @@ def connections(conn, workspace_id: int) -> list[dict]:
         # c.info is grouped too: Postgres rejects a selected column that is
         # neither grouped nor aggregated, which SQLite allows.
         " GROUP BY t.client_id, c.info ORDER BY since", (workspace_id, now)).fetchall()
+    mine, reach = set(), set()
+    if user_id:
+        mine = {r["client_id"] for r in conn.execute(
+            "SELECT DISTINCT client_id FROM oauth_tokens WHERE workspace_id=? AND user_id=?"
+            " AND revoked_at IS NULL AND expires_at>?", (workspace_id, user_id, now))}
+        reach = {r["client_id"] for r in conn.execute(
+            "SELECT client_id FROM oauth_reach WHERE workspace_id=? AND user_id=?",
+            (workspace_id, user_id))}
     return [{"client_id": r["client_id"],
              "name": json.loads(r["info"]).get("client_name") or "OAuth app",
-             "since": r["since"], "last_used": r["last_used"]} for r in rows]
+             "since": r["since"], "last_used": r["last_used"],
+             "mine": r["client_id"] in mine, "reach": r["client_id"] in reach & mine}
+            for r in rows]
+
+
+def set_reach(conn, workspace_id: int, user_id: int, client_id: str, on: bool) -> bool:
+    """Let this person's sign-in of an app read, read-only, what other workspaces
+    share with them, or stop it. Only for an app they are signed in to here."""
+    now = time.time()
+    with db.LOCK, conn:
+        live = conn.execute("SELECT 1 FROM oauth_tokens WHERE workspace_id=? AND user_id=? AND"
+                            " client_id=? AND revoked_at IS NULL AND expires_at>?",
+                            (workspace_id, user_id, client_id, now)).fetchone()
+        if not live:
+            return False
+        conn.execute("DELETE FROM oauth_reach WHERE workspace_id=? AND user_id=? AND"
+                     " client_id=?", (workspace_id, user_id, client_id))
+        if on:
+            conn.execute("INSERT INTO oauth_reach (workspace_id, user_id, client_id, created_at)"
+                         " VALUES (?,?,?,?)", (workspace_id, user_id, client_id, now))
+    return True
 
 
 def disconnect(conn, workspace_id: int, client_id: str) -> int:
@@ -117,6 +155,9 @@ def disconnect(conn, workspace_id: int, client_id: str) -> int:
         cur = conn.execute("UPDATE oauth_tokens SET revoked_at=? WHERE workspace_id=? AND"
                            " client_id=? AND revoked_at IS NULL",
                            (time.time(), workspace_id, client_id))
+        # Signing in again starts reading this workspace only.
+        conn.execute("DELETE FROM oauth_reach WHERE workspace_id=? AND client_id=?",
+                     (workspace_id, client_id))
     return cur.rowcount
 
 

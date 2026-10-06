@@ -114,7 +114,7 @@ def test_lists_tools(server):
     assert names == {"list_pages", "wiki_health", "read_page", "search_pages",
                      "page_history", "write_page", "edit_page", "append_page", "delete_page",
                      "move_page", "change_pages", "upload_file", "list_files", "delete_file",
-                     "set_visibility"}
+                     "set_visibility", "list_workspaces"}
 
 
 def test_list_and_health(server):

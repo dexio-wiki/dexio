@@ -2,7 +2,9 @@
 wiki over streamable HTTP.
 
 Mounted at /mcp by the server. It authenticates with workspace API keys, each of
-which reads and writes its workspace's wiki. A workspace has one wiki (since
+which reads and writes its workspace's wiki and, once the key's creator allows it
+in Settings > Agents, reads what other workspaces share with that person (the
+four read tools' `workspace` argument, list_workspaces). A workspace has one wiki (since
 2026-09-28), so no tool takes a wiki name; a `wiki` argument from a client set up
 before then is ignored. Clients that can send a
 header use one as
@@ -138,6 +140,11 @@ Files: upload_file uploads one (images, PDFs, decks), list_files lists them, rea
 search_pages read and search them like pages, and delete_file removes one for good: files
 keep no history.
 
+Other workspaces: list_workspaces lists this workspace and those that share pages with you.
+Pass one's handle, or a link into it, as workspace to list_pages, search_pages, read_page or
+list_files to read what it shares; it is read-only. A key reads only its own workspace until
+its owner allows more in Settings > Agents.
+
 Who can see it: set_visibility reports or sets who can open a page, a folder or the whole
 wiki: restricted (members), link (anyone with the url) or published (listed on dexio.wiki).
 Open something to the public only when the person asks for it. Sharing with one person by
@@ -166,6 +173,13 @@ Agent = Annotated[str, Field(description=(
     "Your own agent name (each agent sharing an API key gives its own), or the person's name"
     " if a person is making the change."))]
 Note = Annotated[str | None, Field(description="One line: what changed and why.")]
+# Another workspace to read, on the four read tools (Forrest, 2026-10-06: keys act
+# as their person, so an agent reads what other workspaces share with that person).
+Workspace = Annotated[str, Field(description=(
+    "Read another workspace instead: its handle, or a link into it (https://app.dexio.wiki/w/"
+    "<handle>/...). Only what it shares with you, read-only; list_workspaces lists them."
+    " Empty: this workspace."))]
+_HANDLE_IN_URL = re.compile(r"/w/([A-Za-z0-9_-]+)")
 
 
 def ann(kind: dict, title: str) -> ToolAnnotations:
@@ -405,6 +419,44 @@ def build_mcp(conn) -> MCPServer:
         """The key of the caller's workspace's wiki, made if it is somehow missing."""
         return db.ensure_wiki(conn, row["workspace_id"], source="mcp", author=row["name"])
 
+    def reading(row, workspace: str | None) -> tuple[str, shares.Access | None, str]:
+        """What a read tool reads: (wiki key, access, workspace handle). Access is
+        None for the caller's own workspace (everything). For another workspace it
+        is what that workspace shares with the key's person (shares.access), and
+        only when that person let the key read their shares (db.shared_reach_person);
+        a workspace that shares nothing with them reads as not there at all."""
+        home = db.handle_of(conn, row["workspace_id"])
+        want = str(workspace or "").strip()
+        found = _HANDLE_IN_URL.search(want)
+        want = found.group(1) if found else want.strip("/")
+        if not want or want == home:
+            return the_wiki(row), None, home
+        person = db.shared_reach_person(row)
+        if person is None:
+            raise ToolError(
+                f"this key reads only its own workspace ({home}). Its owner can let it read, not"
+                " change, what other workspaces share with them: Settings > Agents, \"Let it read"
+                f" what's shared with you\" ({public}/settings/agents)")
+        ws = db.workspace_by_handle(conn, want)
+        acc = shares.access(conn, ws["id"], person) if ws else None
+        if ws is None or acc is None or not acc.any:
+            raise ToolError(f"no workspace {want!r} shares anything with you;"
+                            " list_workspaces lists those that do")
+        if acc.member:
+            # A key reaches what is shared with its person, not every workspace they
+            # are in; one connected there reads and writes it.
+            raise ToolError(f"you are a member of {ws['name']} ({want}); connect an agent there"
+                            " to read and write it")
+        return db.wiki_key(ws["id"]), acc, want
+
+    def shown_files(k: str, acc: shares.Access | None, folder: str = "") -> list[dict]:
+        """The wiki's files, cut down to those `acc` may open (shares.visible_files)."""
+        stored = files.list_files(conn, k)
+        if acc is not None:
+            stored = shares.visible_files(conn, k, acc, stored)
+        folder = str(folder or "").strip("/")
+        return [f for f in stored if not folder or f["path"].startswith(folder + "/")]
+
     def require_page(pages, path: str) -> Page:
         if path not in pages:
             close = [r[0] for r in conn.execute(
@@ -503,12 +555,13 @@ def build_mcp(conn) -> MCPServer:
 
     public = os.environ.get("DEXIO_PUBLIC_URL", "https://app.dexio.wiki").rstrip("/")
 
-    def page_url(row, path: str | None = None, anchor: str = "") -> str:
+    def page_url(row, path: str | None = None, anchor: str = "", handle: str = "") -> str:
         """Where a person opens the page in the web app (app.py wiki_address), for
         agents to hand on; the wiki's own address without a path. `anchor` is a
         section's (parse.heading_anchors), the same id the web view gives it. A
-        workspace has one wiki, so the address names no wiki (2026-09-28)."""
-        url = f"{public}/w/{db.handle_of(conn, row['workspace_id'])}"
+        workspace has one wiki, so the address names no wiki (2026-09-28). handle:
+        another workspace's, for a page read there."""
+        url = f"{public}/w/{handle or db.handle_of(conn, row['workspace_id'])}"
         if path:
             url += "/" + quote(path, safe="/")
         return url + ("#" + quote(anchor, safe="") if anchor else "")
@@ -714,18 +767,24 @@ def build_mcp(conn) -> MCPServer:
     # ---- read ------------------------------------------------------------
     @server.tool(annotations=ann(READ, "List pages"))
     def list_pages(ctx: Context, folder: str = "",
-                   limit: int = LIST_PAGES_DEFAULT, offset: int = 0) -> dict:
+                   limit: int = LIST_PAGES_DEFAULT, offset: int = 0,
+                   workspace: Workspace = "") -> dict:
         """List the wiki's pages, or one folder's, with title, a one-line description
         (frontmatter description: if set, else the first sentence), word count and last
         change, in path order, 200 at a time. When more remain it gives next_offset and
         the subfolders with their page counts. Uploaded files are in list_files."""
         row = caller(ctx)
-        k = the_wiki(row)
+        k, acc, handle = reading(row, workspace)
         prefix = str(folder or "").strip("/")
         limit = max(1, min(int(limit), LIST_PAGES_MAX))
         offset = max(0, int(offset))
         paths = db.page_paths(conn, k, prefix)
-        rows = db.page_list(conn, k, prefix, limit=limit, offset=offset)
+        if acc is None:
+            rows = db.page_list(conn, k, prefix, limit=limit, offset=offset)
+        else:
+            paths = [p for p in paths if acc.sees(p)]
+            rows = [r for r in db.page_list(conn, k, prefix)
+                    if acc.sees(r["path"])][offset:offset + limit]
         pages = []
         for r in rows:
             p = {"path": r["path"], "title": r["title"]}
@@ -736,6 +795,8 @@ def build_mcp(conn) -> MCPServer:
             p.update(words=r["words"], updated=_iso(r["updated_at"]))
             pages.append(p)
         out = {"folder": prefix, "count": len(paths), "pages": pages}
+        if acc is not None:
+            out = {"workspace": handle, "read_only": True, **out}
         if offset == 0 and len(pages) >= len(paths):
             return out                       # everything, as it has always been
         end = offset + len(pages)
@@ -750,14 +811,49 @@ def build_mcp(conn) -> MCPServer:
         return out
 
     @server.tool(annotations=ann(READ, "List files"))
-    def list_files(ctx: Context, folder: str = "") -> dict:
+    def list_files(ctx: Context, folder: str = "", workspace: Workspace = "") -> dict:
         """List the wiki's uploaded files, or one folder's, with size, type and last change."""
         row = caller(ctx)
-        k = the_wiki(row)
-        stored = files.list_files(conn, k, str(folder or ""))
-        return {"folder": str(folder or "").strip("/"), "count": len(stored),
-                "files": [{"path": f["path"], "size": f["size"], "type": f["content_type"],
-                           "updated": _iso(f["updated_at"])} for f in stored]}
+        k, acc, handle = reading(row, workspace)
+        stored = shown_files(k, acc, str(folder or ""))
+        out = {"folder": str(folder or "").strip("/"), "count": len(stored),
+               "files": [{"path": f["path"], "size": f["size"], "type": f["content_type"],
+                          "updated": _iso(f["updated_at"])} for f in stored]}
+        return out if acc is None else {"workspace": handle, "read_only": True, **out}
+
+    @server.tool(annotations=ann(READ, "List workspaces"))
+    def list_workspaces(ctx: Context) -> dict:
+        """This workspace, and the other workspaces that share pages with you, with what
+        each shares. Pass one's handle as workspace to list_pages, read_page,
+        search_pages or list_files to read it; what is shared is read-only."""
+        row = caller(ctx)
+        ws = db.workspace(conn, row["workspace_id"]) or {}
+        out: dict = {"workspace": {"handle": ws.get("handle"), "name": ws.get("name"),
+                                   "access": "read and write",
+                                   "url": f"{public}/w/{ws.get('handle')}"}}
+        person = db.shared_reach_person(row)
+        if person is None:
+            out["shared"] = []
+            out["hint"] = ("this key reads only its own workspace. Its owner can let it read, not"
+                           " change, what other workspaces share with them: Settings > Agents,"
+                           f" \"Let it read what's shared with you\" ({public}/settings/agents)")
+            return out
+        found = []
+        for w in shares.shared_with(conn, person):
+            acc = shares.access(conn, w["id"], person)
+            if not acc.any or acc.member:
+                continue
+            what: dict = {"wiki": True} if acc.whole else {}
+            if not acc.whole:
+                what.update({"folders": sorted(acc.folders)} if acc.folders else {})
+                what.update({"pages": sorted(acc.pages)} if acc.pages else {})
+            found.append({"handle": w["handle"], "name": w["name"], "access": "read",
+                          "url": f"{public}/w/{w['handle']}", "shared": what})
+        out["shared"] = found
+        if not found:
+            out["hint"] = ("nothing is shared with you by email yet. A page open to anyone with"
+                           " the link can be read too: pass its address as workspace")
+        return out
 
     @server.tool(annotations=ann(READ, "Check wiki health"))
     def wiki_health(ctx: Context, long_page_words: int = LONG_PAGE_WORDS,
@@ -779,7 +875,8 @@ def build_mcp(conn) -> MCPServer:
     @server.tool(annotations=ann(READ, "Read page"))
     def read_page(path: str, ctx: Context, revision: int | None = None,
                   section: str | None = None, offset: int | None = None,
-                  limit: int | None = None, outline: bool = False) -> CallToolResult:
+                  limit: int | None = None, outline: bool = False,
+                  workspace: Workspace = "") -> CallToolResult:
         """Read a page: a JSON header (version, to pass back as base_version; links in
         and out; broken links), then the markdown as plain text. Read part of a long page
         with outline=true (headings and line numbers), section (one heading's section), or
@@ -787,8 +884,12 @@ def build_mcp(conn) -> MCPServer:
         revision reads a past version from page_history. On an uploaded file's path it
         returns the image, or a document's text."""
         row = caller(ctx)
-        k = the_wiki(row)
+        k, acc, handle = reading(row, workspace)
+        if acc is not None and revision is not None:
+            raise ToolError("history is for the workspace's members; read the page as it is now")
         f = file_at(k, path) if revision is None else None
+        if f and acc is not None and f["path"] not in {s["path"] for s in shown_files(k, acc)}:
+            raise ToolError(f"no page {_norm_path(path)!r}")
         if f:
             return file_result(f, offset, limit)
         p = _norm_path(path)
@@ -807,21 +908,30 @@ def build_mcp(conn) -> MCPServer:
                     "note": rev["note"] or "",
                     "version": db.version_of(text), "words": len(text.split())}
         else:
-            page = db.note(conn, k, p)
+            page = db.note(conn, k, p) if acc is None or acc.sees(p) else None
             if not page:
                 close = db.search(conn, k, p.rsplit("/", 1)[-1], limit=5)
-                hint = ", ".join(r["path"] for r in close)
+                hint = ", ".join(r["path"] for r in close if acc is None or acc.sees(r["path"]))
                 raise ToolError(f"no page {p!r}" + (f"; similar: {hint}" if hint else ""))
             text = page["text"]
             links_out = [r["dst"] for r in conn.execute(
                 "SELECT DISTINCT dst FROM edges WHERE project=? AND src=? ORDER BY dst", (k, p))]
             links_in = [r["src"] for r in conn.execute(
                 "SELECT DISTINCT src FROM edges WHERE project=? AND dst=? ORDER BY src", (k, p))]
-            meta = {"path": p, "url": page_url(row, p), "title": page["title"],
-                    "words": page["words"],
-                    "version": db.version_of(text), "updated": _iso(page["updated_at"]),
-                    "links_out": links_out, "links_in": links_in,
-                    "broken_links": broken_from(k, p)}
+            if acc is None:
+                meta = {"path": p, "url": page_url(row, p), "title": page["title"],
+                        "words": page["words"],
+                        "version": db.version_of(text), "updated": _iso(page["updated_at"]),
+                        "links_out": links_out, "links_in": links_in,
+                        "broken_links": broken_from(k, p)}
+            else:
+                # Another workspace's page: links only to what it also shares, and no
+                # broken links, which would say which unshared pages exist.
+                meta = {"workspace": handle, "read_only": True, "path": p,
+                        "url": page_url(row, p, handle=handle), "title": page["title"],
+                        "words": page["words"], "updated": _iso(page["updated_at"]),
+                        "links_out": [x for x in links_out if acc.sees(x)],
+                        "links_in": [x for x in links_in if acc.sees(x)]}
             st = okf.status(okf.fields(text)) if text.startswith("---") else None
             if st:
                 meta["status"] = st
@@ -839,7 +949,7 @@ def build_mcp(conn) -> MCPServer:
             meta.update(section=head["heading"], lines=[first, last], outline=heads)
             anchor = heading_anchors(text, meta.get("title")).get(first)
             if anchor and revision is None:
-                meta["url"] = page_url(row, p, anchor)
+                meta["url"] = page_url(row, p, anchor, handle=handle if acc is not None else "")
         elif offset is not None or limit is not None:
             first = max(1, int(offset or 1))
             if total and first > total:
@@ -868,7 +978,7 @@ def build_mcp(conn) -> MCPServer:
                         hint=f"this read returns lines {first}-{stop} of {last}, up to"
                              f" {READ_MAX_BYTES // 1024} KB; read_page with offset={stop + 1}"
                              " continues, or read one section")
-        if revision is None:
+        if revision is None and acc is None:
             named = unlinked(k, p, body)
             if named:
                 meta["unlinked_mentions"] = named
@@ -877,13 +987,13 @@ def build_mcp(conn) -> MCPServer:
     @server.tool(annotations=ann(READ, "Search pages"))
     def search_pages(query: str, ctx: Context, regex: bool = False,
                      case_sensitive: bool = False, folder: str = "", limit: int = 20,
-                     matches_per_page: int = 5) -> dict:
+                     matches_per_page: int = 5, workspace: Workspace = "") -> dict:
         """Search the wiki's paths, titles and text. Matches every word (common words
         dropped, substrings count), best first; "quoted text" matches exactly; regex=true
         takes a Python regular expression. Returns pages with matching lines and line
         numbers. Search before answering about the workspace and before creating a page."""
         row = caller(ctx)
-        k = the_wiki(row)
+        k, acc, handle = reading(row, workspace)
         q = str(query or "")
         if not q.strip():
             raise ToolError("query is required")
@@ -893,8 +1003,15 @@ def build_mcp(conn) -> MCPServer:
         per = max(1, min(int(matches_per_page), 50))
         prefix = str(folder or "")
         stored = files.search_items(conn, k)
-        pages = [*db.load_pages(conn, k).values(), *stored]
+        loaded = list(db.load_pages(conn, k).values())
         out: dict = {"query": q, "regex": bool(regex)}
+        if acc is not None:
+            # Another workspace: only what it shares with this key's person.
+            opened = {f["path"] for f in shown_files(k, acc)}
+            stored = [s for s in stored if s.path in opened]
+            loaded = [pg for pg in loaded if acc.sees(pg.path)]
+            out = {"workspace": handle, "read_only": True, **out}
+        pages = [*loaded, *stored]
         if regex:
             flags = 0 if case_sensitive else re.IGNORECASE
             try:

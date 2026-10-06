@@ -176,6 +176,10 @@ MIGRATIONS = [
     # (shares.publisher_key); a unique index on it keeps two workspaces apart.
     ("workspaces", "publisher_name", "TEXT"),
     ("workspaces", "publisher_key", "TEXT"),
+    # Set when the key's creator lets it read, read-only, what other workspaces
+    # share with them (Forrest, 2026-10-06: keys should act as their person).
+    # NULL: it reads only its own workspace. See shared_reach_person.
+    ("tokens", "shared_reach", "INTEGER"),
 ]
 
 # A page's history keeps a whole copy at least every this many revisions, so
@@ -759,6 +763,30 @@ def delete_token(conn, token_id: int, workspace_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def set_token_reach(conn, token_id: int, workspace_id: int, user_id: int, on: bool) -> bool:
+    """Let a key read what is shared with its creator, or stop it. Only the
+    creator may: what it opens up is what was shared with them."""
+    with LOCK, conn:
+        cur = conn.execute("UPDATE tokens SET shared_reach=? WHERE id=? AND workspace_id=?"
+                           " AND created_by=?", (1 if on else None, token_id, workspace_id,
+                                                 user_id))
+    return cur.rowcount > 0
+
+
+def shared_reach_person(row) -> int | None:
+    """The account whose shares a key or an app sign-in may read in other
+    workspaces, read-only: its creator (or the person who signed in), once they
+    turned that on in Settings > Agents. None otherwise, and always for a key
+    with no creator on record, which reads only its own workspace."""
+    keys = set(row.keys())
+    if not ("shared_reach" in keys and row["shared_reach"]):
+        return None
+    for field in ("user_id", "created_by"):
+        if field in keys and row[field]:
+            return int(row[field])
+    return None
+
+
 def check_token(conn, token: str):
     # The read takes the write lock too. Every thread shares this connection, and a
     # commit from another thread can reset a statement mid-fetch, so under concurrent
@@ -803,12 +831,12 @@ def people(conn, ids) -> dict[int, str]:
 
 
 def list_tokens(conn, workspace_id: int | None = None) -> list[dict]:
+    cols = ("SELECT id, name, project, workspace_id, created_at, last_used, created_by,"
+            " shared_reach FROM tokens")
     if workspace_id is None:
-        rows = conn.execute("SELECT id, name, project, workspace_id, created_at, last_used"
-                            " FROM tokens ORDER BY id")
+        rows = conn.execute(cols + " ORDER BY id")
     else:
-        rows = conn.execute("SELECT id, name, project, workspace_id, created_at, last_used"
-                            " FROM tokens WHERE workspace_id=? ORDER BY id", (workspace_id,))
+        rows = conn.execute(cols + " WHERE workspace_id=? ORDER BY id", (workspace_id,))
     return [dict(r) for r in rows]
 
 

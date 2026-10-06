@@ -61,7 +61,7 @@ def _drop_workspace(conn, ws_id: int) -> list[str]:
         conn.execute(f"DELETE FROM {table} WHERE project LIKE ?", (prefix,))
     conn.execute("DELETE FROM projects WHERE name LIKE ?", (prefix,))
     for table in ("files", "uploads", "tokens", "invites", "memberships", "oauth_tokens",
-                  "oauth_codes", "device_logins", "wiki_renames", "shares"):
+                  "oauth_codes", "oauth_reach", "device_logins", "wiki_renames", "shares"):
         conn.execute(f"DELETE FROM {table} WHERE workspace_id=?", (ws_id,))
     conn.execute("DELETE FROM workspaces WHERE id=?", (ws_id,))
     return keys
@@ -106,7 +106,7 @@ def delete_account(conn, user_id: int, store=None, on_seats=None) -> dict:
         conn.execute("UPDATE shares SET created_by=NULL WHERE created_by=?", (user_id,))
         conn.execute("UPDATE shares SET listed_by=NULL WHERE listed_by=?", (user_id,))
         for table in ("identities", "password_resets", "device_logins", "oauth_tokens",
-                      "oauth_codes", "signups"):
+                      "oauth_codes", "oauth_reach", "signups"):
             conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))
     removed = 0

@@ -647,6 +647,8 @@ DONE = {
     "renamed": "Workspace renamed.",
     "revoked": "API key revoked.",
     "disconnected": "App disconnected.",
+    "shared_on": "It can now read what other workspaces share with you. It cannot change them.",
+    "shared_off": "It reads only this workspace now.",
     "name": "Name saved.",
     "publisher": "Publisher name saved.",
     "password": "Password changed. Any other signed-in browsers have been signed out.",
@@ -764,7 +766,7 @@ def settings_page(section: str, email: str, ws: dict | None, workspaces: list[di
                               email),
         "agents": lambda: _agents(ws, data.get("tokens") or [], data.get("apps") or [],
                                   data.get("connect"), data.get("base", ""),
-                                  data.get("api", "/api/v1")),
+                                  data.get("api", "/api/v1"), me),
         "files": lambda: files_panel(ws, data.get("storage")),
         "sharing": lambda: _sharing(ws, data.get("sharing") or {}, data.get("team", False)),
         "profile": lambda: _profile(email, data.get("first", ""), data.get("last", ""),
@@ -1146,36 +1148,59 @@ def _sharing(ws: dict, ov: dict, team: bool) -> str:
 
 
 def _agents(ws: dict, tokens: list[dict], apps: list[dict], connect: str | None, base: str,
-            api: str) -> str:
+            api: str, me: int | None = None) -> str:
     """API keys and signed-in apps in one list: both are an AI that can read and
     write this workspace, and the person's question is which ones can. Above it,
     the connect panel, always open (Forrest, 2026-09-27: it doesn't need to be
     collapsible). ?connect=<AI> still picks an AI in it; the account menu and old
-    links come in that way."""
+    links come in that way.
+    Each row's ⋯ menu revokes or disconnects it and, on your own key or sign-in,
+    lets it read what other workspaces share with you, read-only (Forrest,
+    2026-10-06: keys act as their person). Only yours: what it opens is yours."""
     # No Access column since 2026-09-27 (Forrest asked what it did): it only ever
     # read "API key, all wikis" or "Signed in", and every key and sign-in reaches
     # the whole workspace, so how the AI connected is a grey line under its name instead.
     hide = {1}                                  # Added drops out on a phone
+    reads = ", also reads what's shared with you"
 
     def name(label: str, how: str) -> str:
         return f'{e(label)}<span class="sub">{how}</span>'
 
+    def shared_item(base_url: str, label: str, on: bool) -> tuple[str, str, str, str]:
+        if on:
+            return (f"{base_url}/shared/off{_in(ws)}", "", "Stop it reading what's shared with you",
+                    "")
+        return (f"{base_url}/shared/on{_in(ws)}", "", "Let it read what's shared with you",
+                f"Let {label} read what other workspaces share with you? It can read those"
+                " pages, not change them. You can turn this off here at any time.")
+
+    def key_actions(t: dict) -> str:
+        url = f'/settings/tokens/{t["id"]}'
+        items = [shared_item(url, t["name"], bool(t.get("shared_reach")))] \
+            if me and t.get("created_by") == me else []
+        items.append((f"{url}/revoke{_in(ws)}", "", "Revoke", ""))
+        return _row_menu(t["name"], items)
+
+    def app_actions(a: dict) -> str:
+        url = f'/settings/apps/{quote(a["client_id"], safe="")}'
+        items = [shared_item(url, a["name"], bool(a.get("reach")))] if a.get("mine") else []
+        items.append((f"{url}/disconnect{_in(ws)}", "", "Disconnect", ""))
+        return _row_menu(a["name"], items)
+
     rows = [((t["last_used"] or 0), _row([
-        name(t["name"], "API key"), _date(t["created_at"]), _date(t["last_used"]),
-        f'<form method="post" action="/settings/tokens/{t["id"]}/revoke" class="inline">'
-        f'<button type="submit" class="quiet">Revoke</button></form>'], hide))
+        name(t["name"], "API key" + (reads if t.get("shared_reach") else "")),
+        _date(t["created_at"]), _date(t["last_used"]), key_actions(t)], hide))
         for t in tokens]
     rows += [((a["last_used"] or 0), _row([
-        name(a["name"], "Signed in"), _date(a["since"]), _date(a["last_used"]),
-        f'<form method="post" action="/settings/apps/{e(a["client_id"])}/disconnect" '
-        f'class="inline"><button type="submit" class="quiet">Disconnect</button></form>'],
-        hide)) for a in apps]
+        name(a["name"], "Signed in" + (reads if a.get("reach") else "")),
+        _date(a["since"]), _date(a["last_used"]), app_actions(a)], hide)) for a in apps]
     rows.sort(key=lambda r: -r[0])
     body = "".join(r for _, r in rows) or _empty(4, "None yet. Connect one to get started.")
     return f"""{_connect_panel(ws, connect, base, api)}
     <div class="panel" id="connected"><h2>Connected</h2>
       <p class="muted">Every agent that can read and write this workspace's wiki, most recently
-      used first. Revoking or disconnecting one takes effect at once.</p>
+      used first. Revoking or disconnecting one takes effect at once. Your own can also read,
+      not change, what other workspaces share with you: turn that on from its &#8943; menu.</p>
       {_table(["Name", "Added", "Last used", ""], body, hide)}</div>"""
 
 

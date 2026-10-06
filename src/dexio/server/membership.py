@@ -36,7 +36,7 @@ def _owners(conn, ws_id: int) -> int:
 def _revoke_access(conn, ws_id: int, user_id: int) -> None:
     conn.execute("DELETE FROM memberships WHERE workspace_id=? AND user_id=?", (ws_id, user_id))
     conn.execute("DELETE FROM tokens WHERE workspace_id=? AND created_by=?", (ws_id, user_id))
-    for table in ("oauth_tokens", "oauth_codes", "device_logins"):
+    for table in ("oauth_tokens", "oauth_codes", "device_logins", "oauth_reach"):
         conn.execute(f"DELETE FROM {table} WHERE workspace_id=? AND user_id=?", (ws_id, user_id))
     conn.execute("DELETE FROM invites WHERE workspace_id=? AND created_by=? AND used_at IS NULL",
                  (ws_id, user_id))
