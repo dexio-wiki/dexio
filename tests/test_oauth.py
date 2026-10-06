@@ -270,9 +270,9 @@ def test_client_secret_basic_with_the_id_only_in_the_header(app):
     assert r.status_code == 401
 
 
-def test_a_sign_in_reads_what_is_shared_with_its_person_once_allowed(app, monkeypatch):
-    """Keys act as their person (Forrest, 2026-10-06), app sign-ins too: Bob's
-    Claude reads the folder Ann shared with him once he allows it, and only that."""
+def test_a_sign_in_acts_as_its_person_in_other_workspaces(app, monkeypatch):
+    """A key or sign-in acts as its person (Forrest, 2026-10-06): Bob's Claude reads
+    the folder Ann shared with him, and only that, with nothing to turn on."""
     from dexio.server import mail
     links: list[str] = []
     monkeypatch.setattr(mail, "share",
@@ -289,17 +289,9 @@ def test_a_sign_in_reads_what_is_shared_with_its_person_once_allowed(app, monkey
     assert bob.get(f"/s/{code}").status_code == 303
     _cid2, bob_tok, _c2, _v2 = full_flow(app, bob)
     tok = bob_tok["access_token"]
-    assert "reads only its own workspace" in mcp(app, tok, "list_pages", workspace=ann_ws)["error"]
-    page = bob.get("/settings/agents").text
-    cid = re.search(r"/settings/apps/([^/?]+)/shared/on", page).group(1)
-    # Ann has no sign-in of Bob's app in his workspace to turn on
-    assert ann.post(f"/settings/apps/{cid}/shared/on").status_code in (403, 404)
-    r = bob.post(f"/settings/apps/{cid}/shared/on")
-    assert r.status_code == 303 and "done=shared_on" in r.headers["location"]
     got = mcp(app, tok, "list_pages", workspace=ann_ws)
     assert [p["path"] for p in got["pages"]] == ["notes/plan"] and got["read_only"] is True
     assert "no page" in mcp(app, tok, "read_page", path="secret", workspace=ann_ws)["error"]
-    # disconnecting clears it, so a fresh sign-in starts at its own workspace again
-    assert bob.post(f"/settings/apps/{cid}/disconnect").status_code == 303
-    _cid3, again, _c3, _v3 = full_flow(app, bob)
-    assert "reads only" in mcp(app, again["access_token"], "list_pages", workspace=ann_ws)["error"]
+    assert "only its members" in mcp(app, tok, "write_page", path="notes/x", text="# X",
+                                     workspace=ann_ws)["error"]
+    assert [s["handle"] for s in mcp(app, tok, "list_workspaces")["shared"]] == [ann_ws]

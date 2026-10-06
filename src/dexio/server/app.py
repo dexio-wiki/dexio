@@ -1334,7 +1334,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
         elif section == "agents":
             q = request.query_params
             data.update(tokens=db.list_tokens(conn, ws["id"]),
-                        apps=oauth.connections(conn, ws["id"], user["id"]),
+                        apps=oauth.connections(conn, ws["id"]),
                         base=base_url(request), api=API,
                         connect=q.get("connect") if "connect" in q else None)
         elif section == "sharing":
@@ -1499,19 +1499,6 @@ def get_app(db_path: str | None = None) -> FastAPI:
             return settings_done("agents", "revoked", ws)
         return render_settings(request, user, ws, "agents", status=404,
                                error="No such API key in this workspace.")
-
-    @app.post("/settings/tokens/{token_id}/shared/{state}", response_class=HTMLResponse)
-    async def settings_token_reach(request: Request, token_id: int, state: str):
-        """Let your own key read, read-only, what other workspaces share with you
-        (on), or stop it (off). Someone else's key reaches nothing of yours."""
-        user, ws, _f, bounce = await settings_post(request)
-        if bounce:
-            return bounce
-        if state in ("on", "off") and ws and db.set_token_reach(conn, token_id, ws["id"],
-                                                                 user["id"], state == "on"):
-            return settings_done("agents", f"shared_{state}", ws)
-        return render_settings(request, user, ws, "agents", status=404,
-                               error="No API key of yours with that number in this workspace.")
 
     @app.post("/settings/sharing/{share_id}/stop", response_class=HTMLResponse)
     async def settings_unshare(request: Request, share_id: int):
@@ -2416,19 +2403,6 @@ def get_app(db_path: str | None = None) -> FastAPI:
             return settings_done("agents", "disconnected", ws)
         return render_settings(request, user, ws, "agents", status=404,
                                error="That app is not connected here.")
-
-    @app.post("/settings/apps/{client_id}/shared/{state}", response_class=HTMLResponse)
-    async def settings_app_reach(request: Request, client_id: str, state: str):
-        """Your own sign-in of an app (Claude, ChatGPT): let it read what other
-        workspaces share with you, read-only, or stop it."""
-        user, ws, _f, bounce = await settings_post(request)
-        if bounce:
-            return bounce
-        if state in ("on", "off") and ws and oauth.set_reach(conn, ws["id"], user["id"],
-                                                             client_id, state == "on"):
-            return settings_done("agents", f"shared_{state}", ws)
-        return render_settings(request, user, ws, "agents", status=404,
-                               error="You are not signed in to that app here.")
 
     # Last, so every route above wins; the MCP app only answers /mcp.
     app.mount("/", mcp_asgi(mcp, conn,

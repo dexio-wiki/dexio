@@ -176,9 +176,8 @@ MIGRATIONS = [
     # (shares.publisher_key); a unique index on it keeps two workspaces apart.
     ("workspaces", "publisher_name", "TEXT"),
     ("workspaces", "publisher_key", "TEXT"),
-    # Set when the key's creator lets it read, read-only, what other workspaces
-    # share with them (Forrest, 2026-10-06: keys should act as their person).
-    # NULL: it reads only its own workspace. See shared_reach_person.
+    # Unused since the evening of 2026-10-06: a key acts as its person everywhere,
+    # with no switch (Forrest: "allow access to anything the user can see").
     ("tokens", "shared_reach", "INTEGER"),
 ]
 
@@ -240,6 +239,7 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
     _move_into_workspaces(conn)
     one_wiki_each(conn)
     give_handles(conn)
+    keys_to_people(conn)
     with LOCK:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS workspaces_publisher"
                      " ON workspaces(publisher_key)")
@@ -763,28 +763,18 @@ def delete_token(conn, token_id: int, workspace_id: int) -> bool:
     return cur.rowcount > 0
 
 
-def set_token_reach(conn, token_id: int, workspace_id: int, user_id: int, on: bool) -> bool:
-    """Let a key read what is shared with its creator, or stop it. Only the
-    creator may: what it opens up is what was shared with them."""
+def keys_to_people(conn) -> None:
+    """Every API key belongs to a person and acts as them (Forrest, 2026-10-06: "migrate
+    all existing workspace keys to the user, and have it allow access to anything the
+    user can see"). Keys minted before keys had a creator (the operator endpoint, gone
+    since 2026-09-27) go to their workspace's first owner, the account person_of already
+    recorded their changes against."""
     with LOCK, conn:
-        cur = conn.execute("UPDATE tokens SET shared_reach=? WHERE id=? AND workspace_id=?"
-                           " AND created_by=?", (1 if on else None, token_id, workspace_id,
-                                                 user_id))
-    return cur.rowcount > 0
-
-
-def shared_reach_person(row) -> int | None:
-    """The account whose shares a key or an app sign-in may read in other
-    workspaces, read-only: its creator (or the person who signed in), once they
-    turned that on in Settings > Agents. None otherwise, and always for a key
-    with no creator on record, which reads only its own workspace."""
-    keys = set(row.keys())
-    if not ("shared_reach" in keys and row["shared_reach"]):
-        return None
-    for field in ("user_id", "created_by"):
-        if field in keys and row[field]:
-            return int(row[field])
-    return None
+        conn.execute(
+            "UPDATE tokens SET created_by = (SELECT m.user_id FROM memberships m"
+            " WHERE m.workspace_id = tokens.workspace_id AND m.role = 'owner'"
+            " ORDER BY m.created_at, m.user_id LIMIT 1)"
+            " WHERE created_by IS NULL AND workspace_id IS NOT NULL")
 
 
 def check_token(conn, token: str):
@@ -831,8 +821,7 @@ def people(conn, ids) -> dict[int, str]:
 
 
 def list_tokens(conn, workspace_id: int | None = None) -> list[dict]:
-    cols = ("SELECT id, name, project, workspace_id, created_at, last_used, created_by,"
-            " shared_reach FROM tokens")
+    cols = "SELECT id, name, project, workspace_id, created_at, last_used, created_by FROM tokens"
     if workspace_id is None:
         rows = conn.execute(cols + " ORDER BY id")
     else:

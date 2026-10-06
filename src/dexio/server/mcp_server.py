@@ -2,9 +2,9 @@
 wiki over streamable HTTP.
 
 Mounted at /mcp by the server. It authenticates with workspace API keys, each of
-which reads and writes its workspace's wiki and, once the key's creator allows it
-in Settings > Agents, reads what other workspaces share with that person (the
-four read tools' `workspace` argument, list_workspaces). A workspace has one wiki (since
+which acts as the person who made it: its own workspace by default, any other
+workspace that person is a member of, and, read-only, what other workspaces share
+with them (every tool's `workspace` argument, list_workspaces). A workspace has one wiki (since
 2026-09-28), so no tool takes a wiki name; a `wiki` argument from a client set up
 before then is ignored. Clients that can send a
 header use one as
@@ -140,10 +140,10 @@ Files: upload_file uploads one (images, PDFs, decks), list_files lists them, rea
 search_pages read and search them like pages, and delete_file removes one for good: files
 keep no history.
 
-Other workspaces: list_workspaces lists this workspace and those that share pages with you.
-Pass one's handle, or a link into it, as workspace to list_pages, search_pages, read_page or
-list_files to read what it shares; it is read-only. A key reads only its own workspace until
-its owner allows more in Settings > Agents.
+Other workspaces: this key acts as the person who made it (or who signed in). Every tool works
+in this workspace unless you pass workspace: the handle of another one, or a link into it.
+list_workspaces lists them: those the person is a member of (read and write) and those that
+share pages with them (read only what is shared).
 
 Who can see it: set_visibility reports or sets who can open a page, a folder or the whole
 wiki: restricted (members), link (anyone with the url) or published (listed on dexio.wiki).
@@ -173,12 +173,11 @@ Agent = Annotated[str, Field(description=(
     "Your own agent name (each agent sharing an API key gives its own), or the person's name"
     " if a person is making the change."))]
 Note = Annotated[str | None, Field(description="One line: what changed and why.")]
-# Another workspace to read, on the four read tools (Forrest, 2026-10-06: keys act
-# as their person, so an agent reads what other workspaces share with that person).
+# Another workspace to act in (Forrest, 2026-10-06: a key acts as its person, with
+# access to anything they can see). Kept short: every tool lists it.
 Workspace = Annotated[str, Field(description=(
-    "Read another workspace instead: its handle, or a link into it (https://app.dexio.wiki/w/"
-    "<handle>/...). Only what it shares with you, read-only; list_workspaces lists them."
-    " Empty: this workspace."))]
+    "Another workspace: its handle, or a link into it (list_workspaces lists them)."
+    " Empty: this one."))]
 _HANDLE_IN_URL = re.compile(r"/w/([A-Za-z0-9_-]+)")
 
 
@@ -406,10 +405,45 @@ def build_mcp(conn) -> MCPServer:
             raise ToolError("unauthorized: send Authorization: Bearer <API key>")
         return row
 
-    def writer(ctx: Context):
-        """The caller, for a tool that changes the workspace: refused while the
+    def acting(row, workspace: str | None) -> tuple:
+        """Where a call acts: (row, access, workspace handle). A key or sign-in acts as
+        its person (Forrest, 2026-10-06: "migrate all existing workspace keys to the
+        user, and have it allow access to anything the user can see"): its own
+        workspace when none is named; another one they are a member of, read and
+        write, with the row's workspace_id set to it (access None); or one that
+        shares pages with them, read-only (access says what it shares). A workspace
+        that shares nothing with them reads as not there at all, and an id is never
+        a handle."""
+        home = db.handle_of(conn, row["workspace_id"])
+        want = str(workspace or "").strip()
+        found = _HANDLE_IN_URL.search(want)
+        want = found.group(1) if found else want.strip("/")
+        if not want or want == home:
+            return row, None, home
+        person = db.person_of(conn, row)
+        ws = db.workspace_by_handle(conn, want)
+        acc = shares.access(conn, ws["id"], person) if ws and person else None
+        if ws is None or acc is None or not acc.any:
+            raise ToolError(f"no workspace {want!r} that you are in or that shares pages with you;"
+                            " list_workspaces lists them")
+        if acc.member:
+            here = {k: row[k] for k in row.keys()}
+            here["workspace_id"] = ws["id"]
+            return here, None, want
+        return row, acc, want
+
+    def member(ctx: Context, workspace: str | None = ""):
+        """The caller, acting in a workspace they are a member of (theirs by default)."""
+        row, acc, handle = acting(caller(ctx), workspace)
+        if acc is not None:
+            raise ToolError(f"{handle} shares pages with you to read; only its members can"
+                            " change it or see its history")
+        return row
+
+    def writer(ctx: Context, workspace: str | None = ""):
+        """The caller, for a tool that changes a workspace: refused while that
         workspace is read-only (db.read_only_reason), with what an owner can do."""
-        row = caller(ctx)
+        row = member(ctx, workspace)
         why = db.read_only_reason(conn, row["workspace_id"])
         if why:
             raise ToolError(why)
@@ -419,35 +453,10 @@ def build_mcp(conn) -> MCPServer:
         """The key of the caller's workspace's wiki, made if it is somehow missing."""
         return db.ensure_wiki(conn, row["workspace_id"], source="mcp", author=row["name"])
 
-    def reading(row, workspace: str | None) -> tuple[str, shares.Access | None, str]:
-        """What a read tool reads: (wiki key, access, workspace handle). Access is
-        None for the caller's own workspace (everything). For another workspace it
-        is what that workspace shares with the key's person (shares.access), and
-        only when that person let the key read their shares (db.shared_reach_person);
-        a workspace that shares nothing with them reads as not there at all."""
-        home = db.handle_of(conn, row["workspace_id"])
-        want = str(workspace or "").strip()
-        found = _HANDLE_IN_URL.search(want)
-        want = found.group(1) if found else want.strip("/")
-        if not want or want == home:
-            return the_wiki(row), None, home
-        person = db.shared_reach_person(row)
-        if person is None:
-            raise ToolError(
-                f"this key reads only its own workspace ({home}). Its owner can let it read, not"
-                " change, what other workspaces share with them: Settings > Agents, \"Let it read"
-                f" what's shared with you\" ({public}/settings/agents)")
-        ws = db.workspace_by_handle(conn, want)
-        acc = shares.access(conn, ws["id"], person) if ws else None
-        if ws is None or acc is None or not acc.any:
-            raise ToolError(f"no workspace {want!r} shares anything with you;"
-                            " list_workspaces lists those that do")
-        if acc.member:
-            # A key reaches what is shared with its person, not every workspace they
-            # are in; one connected there reads and writes it.
-            raise ToolError(f"you are a member of {ws['name']} ({want}); connect an agent there"
-                            " to read and write it")
-        return db.wiki_key(ws["id"]), acc, want
+    def reading(row, workspace: str | None) -> tuple:
+        """What a read tool reads: (row, wiki key, access, handle); see acting."""
+        row, acc, handle = acting(row, workspace)
+        return row, the_wiki(row) if acc is None else db.wiki_key(acc.workspace_id), acc, handle
 
     def shown_files(k: str, acc: shares.Access | None, folder: str = "") -> list[dict]:
         """The wiki's files, cut down to those `acc` may open (shares.visible_files)."""
@@ -774,7 +783,7 @@ def build_mcp(conn) -> MCPServer:
         change, in path order, 200 at a time. When more remain it gives next_offset and
         the subfolders with their page counts. Uploaded files are in list_files."""
         row = caller(ctx)
-        k, acc, handle = reading(row, workspace)
+        row, k, acc, handle = reading(row, workspace)
         prefix = str(folder or "").strip("/")
         limit = max(1, min(int(limit), LIST_PAGES_MAX))
         offset = max(0, int(offset))
@@ -814,7 +823,7 @@ def build_mcp(conn) -> MCPServer:
     def list_files(ctx: Context, folder: str = "", workspace: Workspace = "") -> dict:
         """List the wiki's uploaded files, or one folder's, with size, type and last change."""
         row = caller(ctx)
-        k, acc, handle = reading(row, workspace)
+        row, k, acc, handle = reading(row, workspace)
         stored = shown_files(k, acc, str(folder or ""))
         out = {"folder": str(folder or "").strip("/"), "count": len(stored),
                "files": [{"path": f["path"], "size": f["size"], "type": f["content_type"],
@@ -823,23 +832,24 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(READ, "List workspaces"))
     def list_workspaces(ctx: Context) -> dict:
-        """This workspace, and the other workspaces that share pages with you, with what
-        each shares. Pass one's handle as workspace to list_pages, read_page,
-        search_pages or list_files to read it; what is shared is read-only."""
+        """The workspaces this key can reach, acting as its person: this one, the
+        others they are a member of (read and write), and those that share pages with
+        them (read-only, with what each shares). Pass one's handle as workspace to
+        any tool to act there."""
         row = caller(ctx)
-        ws = db.workspace(conn, row["workspace_id"]) or {}
-        out: dict = {"workspace": {"handle": ws.get("handle"), "name": ws.get("name"),
-                                   "access": "read and write",
-                                   "url": f"{public}/w/{ws.get('handle')}"}}
-        person = db.shared_reach_person(row)
-        if person is None:
-            out["shared"] = []
-            out["hint"] = ("this key reads only its own workspace. Its owner can let it read, not"
-                           " change, what other workspaces share with them: Settings > Agents,"
-                           f" \"Let it read what's shared with you\" ({public}/settings/agents)")
-            return out
+        person = db.person_of(conn, row)
+        here = db.workspace(conn, row["workspace_id"]) or {}
+
+        def entry(w: dict, access: str) -> dict:
+            return {"handle": w.get("handle"), "name": w.get("name"), "access": access,
+                    "url": f"{public}/w/{w.get('handle')}"}
+
+        out: dict = {"workspace": entry(here, "read and write")}
+        out["member_of"] = [entry(w, "read and write")
+                            for w in (db.workspaces_for_user(conn, person) if person else [])
+                            if w["id"] != row["workspace_id"]]
         found = []
-        for w in shares.shared_with(conn, person):
+        for w in shares.shared_with(conn, person) if person else []:
             acc = shares.access(conn, w["id"], person)
             if not acc.any or acc.member:
                 continue
@@ -847,23 +857,19 @@ def build_mcp(conn) -> MCPServer:
             if not acc.whole:
                 what.update({"folders": sorted(acc.folders)} if acc.folders else {})
                 what.update({"pages": sorted(acc.pages)} if acc.pages else {})
-            found.append({"handle": w["handle"], "name": w["name"], "access": "read",
-                          "url": f"{public}/w/{w['handle']}", "shared": what})
+            found.append({**entry(w, "read"), "shared": what})
         out["shared"] = found
-        if not found:
-            out["hint"] = ("nothing is shared with you by email yet. A page open to anyone with"
-                           " the link can be read too: pass its address as workspace")
         return out
 
     @server.tool(annotations=ann(READ, "Check wiki health"))
     def wiki_health(ctx: Context, long_page_words: int = LONG_PAGE_WORDS,
-                    stale_days: int = health.STALE_DAYS) -> dict:
+                    stale_days: int = health.STALE_DAYS, workspace: Workspace = "") -> dict:
         """Check the wiki: broken links (the only problems), and as information: missing
         pages most linked to (wanted), pages that may be stale (past their stale_after
         date, or unchanged stale_days while pages they link to changed), pages named
         without a link (unlinked_mentions), pages over long_page_words, the most linked
         pages, and pages with no links."""
-        row = caller(ctx)
+        row = member(ctx, workspace)
         k = the_wiki(row)
         proj = conn.execute("SELECT updated_at FROM projects WHERE name=?", (k,)).fetchone()
         limit = max(100, int(long_page_words))
@@ -884,7 +890,7 @@ def build_mcp(conn) -> MCPServer:
         revision reads a past version from page_history. On an uploaded file's path it
         returns the image, or a document's text."""
         row = caller(ctx)
-        k, acc, handle = reading(row, workspace)
+        row, k, acc, handle = reading(row, workspace)
         if acc is not None and revision is not None:
             raise ToolError("history is for the workspace's members; read the page as it is now")
         f = file_at(k, path) if revision is None else None
@@ -993,7 +999,7 @@ def build_mcp(conn) -> MCPServer:
         takes a Python regular expression. Returns pages with matching lines and line
         numbers. Search before answering about the workspace and before creating a page."""
         row = caller(ctx)
-        k, acc, handle = reading(row, workspace)
+        row, k, acc, handle = reading(row, workspace)
         q = str(query or "")
         if not q.strip():
             raise ToolError("query is required")
@@ -1038,11 +1044,11 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(READ, "Page history"))
     def page_history(ctx: Context, path: str | None = None, limit: int = 20,
-                     agent: str | None = None) -> dict:
+                     agent: str | None = None, workspace: Workspace = "") -> dict:
         """A page's revisions, newest first, or without path the wiki's latest
         changes: when, op, agent, person (the account behind it), author (API key or app),
         note, version. agent filters to one agent. Works for deleted pages."""
-        row = caller(ctx)
+        row = member(ctx, workspace)
         k = the_wiki(row)
         n = max(1, min(int(limit), 200))
         who = " ".join(str(agent or "").split()) or None
@@ -1075,10 +1081,11 @@ def build_mcp(conn) -> MCPServer:
     # ---- write -----------------------------------------------------------
     @server.tool(annotations=ann(WRITE, "Write page"))
     def write_page(path: str, text: str, ctx: Context, agent: Agent = "",
-                   base_version: str | None = None, note: Note = None) -> dict:
+                   base_version: str | None = None, note: Note = None,
+                   workspace: Workspace = "") -> dict:
         """Create a page or replace its whole text. If a page on the topic exists, use
         edit_page. base_version makes the write fail if the page changed since you read it."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         p = _norm_path(path)
@@ -1092,11 +1099,12 @@ def build_mcp(conn) -> MCPServer:
     @server.tool(annotations=ann(CHANGE, "Edit page"))
     def edit_page(path: str, new_text: str, ctx: Context, agent: Agent = "",
                   old_text: str = "", section: str | None = None, replace_all: bool = False,
-                  base_version: str | None = None, note: Note = None) -> dict:
+                  base_version: str | None = None, note: Note = None,
+                  workspace: Workspace = "") -> dict:
         """Change part of a page. old_text replaces an exact string, which must be unique
         unless replace_all. section alone replaces that whole section, heading included;
         with old_text, old_text need only be unique within it. Empty new_text deletes."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         p = _norm_path(path)
@@ -1110,10 +1118,10 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(CHANGE, "Append to page"))
     def append_page(path: str, text: str, ctx: Context, agent: Agent = "",
-                    note: Note = None) -> dict:
+                    note: Note = None, workspace: Workspace = "") -> dict:
         """Add text to the end of a page on a new line, creating the page if needed.
         For logs and running lists."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         p = _norm_path(path)
@@ -1126,10 +1134,11 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(REMOVE, "Delete page"))
     def delete_page(path: str, ctx: Context, agent: Agent = "",
-                    base_version: str | None = None, note: Note = None) -> dict:
+                    base_version: str | None = None, note: Note = None,
+                    workspace: Workspace = "") -> dict:
         """Delete a page. Its history is kept, and the result says how to restore it.
         Returns the pages whose links to it are now broken."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         p = _norm_path(path)
@@ -1148,10 +1157,11 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(CHANGE, "Move page"))
     def move_page(path: str, new_path: str, ctx: Context, agent: Agent = "",
-                  update_links: bool = True, note: Note = None) -> dict:
+                  update_links: bool = True, note: Note = None,
+                  workspace: Workspace = "") -> dict:
         """Rename or move a page, rewriting the links to it (unless update_links is
         false). Fails if new_path exists."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         old, new = _norm_path(path), _norm_path(new_path)
@@ -1163,12 +1173,12 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(WRITE, "Upload file"))
     def upload_file(path: str, ctx: Context, agent: Agent = "",
-                    note: Note = None) -> dict:
+                    note: Note = None, workspace: Workspace = "") -> dict:
         """Get a one-time URL for uploading a file (image, PDF, deck, anything up to
         100 MB) to path, e.g. raw/deck.pdf, then PUT the file to it from a shell:
         curl -T FILE URL. It works once, for 15 minutes, and replaces a file at path.
         Pages link to files by path."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         try:
@@ -1190,9 +1200,9 @@ def build_mcp(conn) -> MCPServer:
                 "command": f"curl -sS --fail-with-body -T FILE '{url}'"}
 
     @server.tool(annotations=ann(REMOVE, "Delete file"))
-    def delete_file(path: str, ctx: Context) -> dict:
+    def delete_file(path: str, ctx: Context, workspace: Workspace = "") -> dict:
         """Delete an uploaded file. Permanent: files keep no history."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         k = the_wiki(row)
         f = file_at(k, path)
         if not f:
@@ -1208,11 +1218,12 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(CHANGE, "Change several pages"))
     def change_pages(changes: ChangeList, ctx: Context, agent: Agent = "",
-                     dry_run: bool = False, note: Note = None) -> dict:
+                     dry_run: bool = False, note: Note = None,
+                     workspace: Workspace = "") -> dict:
         """Apply up to 200 changes as one step, all or none: write, edit, append,
         delete and move, each with its one-page tool's fields, run in order. dry_run
         reports what would change and which links would break, writing nothing."""
-        row = writer(ctx)
+        row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         note_s = _check_note(note)
@@ -1356,7 +1367,8 @@ def build_mcp(conn) -> MCPServer:
     def set_visibility(ctx: Context, path: str = "",
                        visibility: Literal["restricted", "link", "published"] | None = None,
                        kind: Literal["page", "folder", "wiki"] | None = None,
-                       title: str | None = None, description: str | None = None) -> dict:
+                       title: str | None = None, description: str | None = None,
+                       workspace: Workspace = "") -> dict:
         """Who can open a page, a folder (everything under it) or the whole wiki (empty
         path), or change it. restricted: members, and people it was shared with by
         email. link: anyone with its url can read it; search engines are asked not to
@@ -1365,7 +1377,7 @@ def build_mcp(conn) -> MCPServer:
         and description for the listing. Without visibility it reports and changes
         nothing. A folder's or the wiki's wider setting still applies to what is in it.
         Opening something to the public is for when the person asks for it."""
-        row = caller(ctx)
+        row = member(ctx, workspace)
         ws = row["workspace_id"]
         kind_, p = target_of(row, path, kind)
         if visibility is None:

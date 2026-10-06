@@ -61,7 +61,7 @@ def _drop_workspace(conn, ws_id: int) -> list[str]:
         conn.execute(f"DELETE FROM {table} WHERE project LIKE ?", (prefix,))
     conn.execute("DELETE FROM projects WHERE name LIKE ?", (prefix,))
     for table in ("files", "uploads", "tokens", "invites", "memberships", "oauth_tokens",
-                  "oauth_codes", "oauth_reach", "device_logins", "wiki_renames", "shares"):
+                  "oauth_codes", "device_logins", "wiki_renames", "shares"):
         conn.execute(f"DELETE FROM {table} WHERE workspace_id=?", (ws_id,))
     conn.execute("DELETE FROM workspaces WHERE id=?", (ws_id,))
     return keys
@@ -98,7 +98,8 @@ def delete_account(conn, user_id: int, store=None, on_seats=None) -> dict:
         # What stays in shared workspaces no longer points at the account.
         for table in ("revisions", "files", "uploads", "wiki_renames"):
             conn.execute(f"UPDATE {table} SET user_id=NULL WHERE user_id=?", (user_id,))
-        conn.execute("UPDATE tokens SET created_by=NULL WHERE created_by=?", (user_id,))
+        # A key acts as its person (2026-10-06), so it goes with them.
+        conn.execute("DELETE FROM tokens WHERE created_by=?", (user_id,))
         conn.execute("UPDATE invites SET created_by=NULL WHERE created_by=?", (user_id,))
         conn.execute("UPDATE invites SET used_by=NULL WHERE used_by=?", (user_id,))
         # What was shared with the account goes with it; what it shared stays.
@@ -106,7 +107,7 @@ def delete_account(conn, user_id: int, store=None, on_seats=None) -> dict:
         conn.execute("UPDATE shares SET created_by=NULL WHERE created_by=?", (user_id,))
         conn.execute("UPDATE shares SET listed_by=NULL WHERE listed_by=?", (user_id,))
         for table in ("identities", "password_resets", "device_logins", "oauth_tokens",
-                      "oauth_codes", "oauth_reach", "signups"):
+                      "oauth_codes", "signups"):
             conn.execute(f"DELETE FROM {table} WHERE user_id=?", (user_id,))
         conn.execute("DELETE FROM users WHERE id=?", (user_id,))
     removed = 0
