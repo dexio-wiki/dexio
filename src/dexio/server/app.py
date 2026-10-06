@@ -1333,8 +1333,8 @@ def get_app(db_path: str | None = None) -> FastAPI:
                         seat_price=pages.PRICES.get(full.get("plan") or "") if billed else None)
         elif section == "agents":
             q = request.query_params
-            data.update(tokens=db.list_tokens(conn, ws["id"]),
-                        apps=oauth.connections(conn, ws["id"]),
+            data.update(tokens=db.list_my_tokens(conn, user["id"]),
+                        apps=oauth.my_connections(conn, user["id"]),
                         base=base_url(request), api=API,
                         connect=q.get("connect") if "connect" in q else None)
         elif section == "sharing":
@@ -1495,10 +1495,12 @@ def get_app(db_path: str | None = None) -> FastAPI:
         user, ws, _f, bounce = await settings_post(request)
         if bounce:
             return bounce
-        if ws and db.delete_token(conn, token_id, ws["id"]):
+        # Your own keys only, in whatever workspace they start: a key acts as its
+        # person (2026-10-06). Someone else's agents leave with their membership.
+        if db.delete_my_token(conn, token_id, user["id"]):
             return settings_done("agents", "revoked", ws)
         return render_settings(request, user, ws, "agents", status=404,
-                               error="No such API key in this workspace.")
+                               error="No such API key of yours.")
 
     @app.post("/settings/sharing/{share_id}/stop", response_class=HTMLResponse)
     async def settings_unshare(request: Request, share_id: int):
@@ -2396,13 +2398,16 @@ def get_app(db_path: str | None = None) -> FastAPI:
 
     @app.post("/settings/apps/{client_id}/disconnect", response_class=HTMLResponse)
     async def settings_disconnect(request: Request, client_id: str):
+        """Sign your own app out of one workspace: ?in= names it (the row's), else
+        the one Settings is on."""
         user, ws, _f, bounce = await settings_post(request)
         if bounce:
             return bounce
-        if ws and oauth.disconnect(conn, ws["id"], client_id):
+        there = db.workspace_by_handle(conn, request.query_params.get("in", "")) or ws
+        if there and oauth.disconnect_mine(conn, user["id"], client_id, there["id"]):
             return settings_done("agents", "disconnected", ws)
         return render_settings(request, user, ws, "agents", status=404,
-                               error="That app is not connected here.")
+                               error="That app is not signed in for you there.")
 
     # Last, so every route above wins; the MCP app only answers /mcp.
     app.mount("/", mcp_asgi(mcp, conn,

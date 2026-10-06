@@ -763,6 +763,24 @@ def delete_token(conn, token_id: int, workspace_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def list_my_tokens(conn, user_id: int) -> list[dict]:
+    """A person's API keys in every workspace, each with the workspace it starts in,
+    for Settings > Agents (an account section since 2026-10-06: a key acts as its
+    person, so it is theirs, not the workspace's)."""
+    return [dict(r) for r in conn.execute(
+        "SELECT t.id, t.name, t.created_at, t.last_used, t.workspace_id,"
+        " w.name AS workspace_name, w.handle AS workspace_handle FROM tokens t"
+        " JOIN workspaces w ON w.id = t.workspace_id WHERE t.created_by=? ORDER BY t.id",
+        (user_id,))]
+
+
+def delete_my_token(conn, token_id: int, user_id: int) -> bool:
+    """Revoke one of a person's own keys, whichever workspace it starts in."""
+    with LOCK, conn:
+        cur = conn.execute("DELETE FROM tokens WHERE id=? AND created_by=?", (token_id, user_id))
+    return cur.rowcount > 0
+
+
 def keys_to_people(conn) -> None:
     """Every API key belongs to a person and acts as them (Forrest, 2026-10-06: "migrate
     all existing workspace keys to the user, and have it allow access to anything the

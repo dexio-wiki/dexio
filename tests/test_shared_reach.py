@@ -184,3 +184,38 @@ def test_deleting_an_account_deletes_its_keys(app, sent):
     from dexio.server import erase
     erase.delete_account(conn, user_id(app, "bea@example.com"))
     assert len(db.list_tokens(conn, ws_of(app, handle))) == before - 1
+
+
+def test_agents_is_an_account_section_listing_your_own_agents(app, sent):
+    """Forrest, 2026-10-06: "why is the Agents screen still a part of the Workspace
+    settings area?" Agents sits under Account and lists your keys and sign-ins in
+    every workspace, with where each starts; you revoke only your own."""
+    import re
+    owner, _tok, handle = owner_with_wiki(app)
+    conn = app.state.conn
+    bea = browser(app)
+    signup(bea, "bea@example.com")
+    own = bea.get("/api/v1/workspaces").json()["current"]
+    db.add_member(conn, ws_of(app, handle), user_id(app, "bea@example.com"))
+    assert bea.post(f"/api/v1/connect?w={own}", json={"client": "hermes"}).status_code == 200
+    assert bea.post(f"/api/v1/connect?w={handle}", json={"client": "claude-code"}).status_code == 200
+    page = bea.get(f"/settings/agents?w={own}").text
+    nav = page.split('class="snav"', 1)[1].split("</nav>", 1)[0]
+    account = nav.split('<div class="sgroup">Account</div>', 1)[1]
+    workspace = nav.split('<div class="sgroup">Account</div>', 1)[0]
+    assert 'href="/settings/agents"' in account and 'href="/settings/agents"' not in workspace
+    assert "Your agents" in page
+    assert "starts in owner&#x27;s Workspace" in page and "starts in bea&#x27;s Workspace" in page
+    # the owner's own key is not in Bea's list, and she cannot revoke it
+    assert page.count("/revoke") == 2
+    owner_key = conn.execute("SELECT id FROM tokens WHERE created_by=?",
+                             (user_id(app, "owner@example.com"),)).fetchone()["id"]
+    assert bea.post(f"/settings/tokens/{owner_key}/revoke").status_code == 404
+    # nor does the owner see Bea's key made in the owner's workspace
+    assert page.count("Claude Code") >= 1
+    assert "Claude Code" not in owner.get(f"/settings/agents?w={handle}").text.split(
+        'id="connected"', 1)[1]
+    # switching workspace in the sidebar stays on Agents
+    assert f'href="/settings/agents?w={handle}"' in nav
+    tid = re.findall(r"/settings/tokens/(\d+)/revoke", page)[0]
+    assert bea.post(f"/settings/tokens/{tid}/revoke").status_code == 303

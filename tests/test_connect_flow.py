@@ -302,7 +302,7 @@ def test_agents_panel_has_no_wiki_to_pick(app):
     box = panel(c.get("/settings/agents?connect").text)
     for gone in ("connect-wiki", "Wiki it uses", "<select", "data-wiki", "none yet"):
         assert gone not in box, gone
-    assert "it can read and write this\n      workspace's wiki" in box
+    assert "it works as you, starting in" in box
     picked = panel(c.get("/settings/agents?connect=claude-code").text)
     assert panel(c.get("/settings/agents?connect=claude-code&wiki=research").text) == picked
     assert "wiki called" not in picked

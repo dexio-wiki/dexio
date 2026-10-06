@@ -115,6 +115,34 @@ def connections(conn, workspace_id: int) -> list[dict]:
              "since": r["since"], "last_used": r["last_used"]} for r in rows]
 
 
+def my_connections(conn, user_id: int) -> list[dict]:
+    """A person's app sign-ins: one row per app and workspace it was signed in to
+    (where it starts), for Settings > Agents."""
+    now = time.time()
+    rows = conn.execute(
+        "SELECT t.client_id, c.info, t.workspace_id, w.name AS workspace_name,"
+        " w.handle AS workspace_handle, MIN(t.created_at) AS since, MAX(t.last_used) AS last_used"
+        " FROM oauth_tokens t JOIN oauth_clients c USING (client_id)"
+        " JOIN workspaces w ON w.id = t.workspace_id"
+        " WHERE t.user_id=? AND t.revoked_at IS NULL AND t.expires_at>?"
+        " GROUP BY t.client_id, c.info, t.workspace_id, w.name, w.handle ORDER BY since",
+        (user_id, now)).fetchall()
+    return [{"client_id": r["client_id"],
+             "name": json.loads(r["info"]).get("client_name") or "OAuth app",
+             "since": r["since"], "last_used": r["last_used"], "workspace_id": r["workspace_id"],
+             "workspace_name": r["workspace_name"], "workspace_handle": r["workspace_handle"]}
+            for r in rows]
+
+
+def disconnect_mine(conn, user_id: int, client_id: str, workspace_id: int) -> int:
+    """Sign one person's app out of the workspace it was signed in to."""
+    with db.LOCK, conn:
+        cur = conn.execute("UPDATE oauth_tokens SET revoked_at=? WHERE user_id=? AND"
+                           " client_id=? AND workspace_id=? AND revoked_at IS NULL",
+                           (time.time(), user_id, client_id, workspace_id))
+    return cur.rowcount
+
+
 def disconnect(conn, workspace_id: int, client_id: str) -> int:
     with db.LOCK, conn:
         cur = conn.execute("UPDATE oauth_tokens SET revoked_at=? WHERE workspace_id=? AND"

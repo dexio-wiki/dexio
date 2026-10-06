@@ -636,8 +636,11 @@ def files_panel(ws: dict, storage: dict | None) -> str:
 # A Wikis section (list, rename, delete, new, download) went on 2026-09-28, when a
 # workspace came to have one wiki; its download link is under General.
 WORKSPACE_SECTIONS = (("general", "General"), ("members", "Members"), ("sharing", "Sharing"),
-                      ("agents", "Agents"), ("files", "Files"), ("plan", "Plan"))
-ACCOUNT_SECTIONS = (("profile", "Profile"), ("appearance", "Appearance"), ("help", "Help"))
+                      ("files", "Files"), ("plan", "Plan"))
+# Agents is the person's since 2026-10-06 (Forrest: "why is the Agents screen still a
+# part of the Workspace settings area?"): a key acts as its person in every workspace.
+ACCOUNT_SECTIONS = (("profile", "Profile"), ("agents", "Agents"), ("appearance", "Appearance"),
+                    ("help", "Help"))
 SECTIONS = dict(WORKSPACE_SECTIONS + ACCOUNT_SECTIONS)
 WORKSPACE_ONLY = {k for k, _ in WORKSPACE_SECTIONS}
 
@@ -717,7 +720,9 @@ def _settings_nav(section: str, ws: dict | None, workspaces: list[dict]) -> str:
         parts.append('<div class="sgroup">Workspace</div>')
         # The graph's workspace menu, here too: switching keeps you on the same
         # section, in the other workspace, and New workspace is always on offer.
-        target = section_url(section if section in WORKSPACE_ONLY else "general")
+        # Agents stays put: the workspace picked here is where a new agent starts.
+        target = section_url(section if section in WORKSPACE_ONLY or section == "agents"
+                             else "general")
         parts.append(workspace_menu(workspaces or [ws], ws["id"],
                                     lambda w: f"{target}?w={w['handle']}", menu_id="ws-menu"))
         parts += [link(k, label) for k, label in WORKSPACE_SECTIONS]
@@ -764,7 +769,7 @@ def settings_page(section: str, email: str, ws: dict | None, workspaces: list[di
                               email),
         "agents": lambda: _agents(ws, data.get("tokens") or [], data.get("apps") or [],
                                   data.get("connect"), data.get("base", ""),
-                                  data.get("api", "/api/v1")),
+                                  data.get("api", "/api/v1"), len(workspaces) > 1),
         "files": lambda: files_panel(ws, data.get("storage")),
         "sharing": lambda: _sharing(ws, data.get("sharing") or {}, data.get("team", False)),
         "profile": lambda: _profile(email, data.get("first", ""), data.get("last", ""),
@@ -1145,40 +1150,44 @@ def _sharing(ws: dict, ov: dict, team: bool) -> str:
     return "".join(panels)
 
 
-def _agents(ws: dict, tokens: list[dict], apps: list[dict], connect: str | None, base: str,
-            api: str) -> str:
-    """API keys and signed-in apps in one list: both are an AI that can read and
-    write this workspace, and the person's question is which ones can. Above it,
+def _agents(ws: dict | None, tokens: list[dict], apps: list[dict], connect: str | None,
+            base: str, api: str, many: bool = False) -> str:
+    """Your agents: your API keys and app sign-ins in every workspace, in one list.
+    An account section since 2026-10-06 (Forrest: "why is the Agents screen still a
+    part of the Workspace settings area?"), once a key acted as its person. Each row
+    says where it starts when you are in more than one workspace (many). Above it,
     the connect panel, always open (Forrest, 2026-09-27: it doesn't need to be
-    collapsible). ?connect=<AI> still picks an AI in it; the account menu and old
-    links come in that way. Each acts as the person who connected it (Forrest,
-    2026-10-06), so it also reaches their other workspaces and what is shared with
-    them; the panel's line says so."""
-    # No Access column since 2026-09-27 (Forrest asked what it did): it only ever
-    # read "API key, all wikis" or "Signed in", and every key and sign-in reaches
-    # the whole workspace, so how the AI connected is a grey line under its name instead.
+    collapsible); a new agent starts in the workspace Settings is on. ?connect=<AI>
+    still picks an AI in it; the account menu and old links come in that way."""
+    # No Access column since 2026-09-27 (Forrest asked what it did): how the AI
+    # connected, and where it starts, is a grey line under its name instead.
     hide = {1}                                  # Added drops out on a phone
 
-    def name(label: str, how: str) -> str:
-        return f'{e(label)}<span class="sub">{how}</span>'
+    def name(label: str, how: str, where: str) -> str:
+        at = f", starts in {e(where)}" if many and where else ""
+        return f'{e(label)}<span class="sub">{how}{at}</span>'
 
     rows = [((t["last_used"] or 0), _row([
-        name(t["name"], "API key"), _date(t["created_at"]), _date(t["last_used"]),
+        name(t["name"], "API key", t.get("workspace_name", "")),
+        _date(t["created_at"]), _date(t["last_used"]),
         f'<form method="post" action="/settings/tokens/{t["id"]}/revoke" class="inline">'
         f'<button type="submit" class="quiet">Revoke</button></form>'], hide))
         for t in tokens]
     rows += [((a["last_used"] or 0), _row([
-        name(a["name"], "Signed in"), _date(a["since"]), _date(a["last_used"]),
-        f'<form method="post" action="/settings/apps/{e(a["client_id"])}/disconnect" '
-        f'class="inline"><button type="submit" class="quiet">Disconnect</button></form>'],
+        name(a["name"], "Signed in", a.get("workspace_name", "")),
+        _date(a["since"]), _date(a["last_used"]),
+        f'<form method="post" action="/settings/apps/{e(a["client_id"])}/disconnect'
+        f'?in={e(a.get("workspace_handle", ""))}" class="inline">'
+        f'<button type="submit" class="quiet">Disconnect</button></form>'],
         hide)) for a in apps]
     rows.sort(key=lambda r: -r[0])
     body = "".join(r for _, r in rows) or _empty(4, "None yet. Connect one to get started.")
-    return f"""{_connect_panel(ws, connect, base, api)}
-    <div class="panel" id="connected"><h2>Connected</h2>
-      <p class="muted">Agents connected from this workspace, most recently used first. Each acts
-      as the person who connected it: it works in every workspace they are in and can read what
-      is shared with them. Revoking or disconnecting one takes effect at once.</p>
+    connect_html = _connect_panel(ws, connect, base, api) if ws else ""
+    return f"""{connect_html}
+    <div class="panel" id="connected"><h2>Your agents</h2>
+      <p class="muted">Every agent you have connected, most recently used first. Each one works
+      as you: in every workspace you are in, and it can read what other workspaces share with
+      you. Revoking or disconnecting one takes effect at once.</p>
       {_table(["Name", "Added", "Last used", ""], body, hide)}</div>"""
 
 
@@ -1203,8 +1212,8 @@ def _connect_panel(ws: dict, connect: str | None, base: str, api: str) -> str:
     return f"""<div class="panel" id="connect" data-api="{e(api)}" data-ws="{e(ws['handle'])}"
       data-client="{e(pick)}">
       {head}
-      <p class="muted">Which agent do you use? Once it is connected, it can read and write this
-      workspace's wiki.</p>
+      <p class="muted">Which agent do you use? Once it is connected it works as you, starting in
+      {e(ws["name"])}.</p>
       <div class="ai-flow" data-at="{at}"{f' data-client="{e(pick)}"' if pick else ""}>
         {ais.steps_head(at, picked)}
         <div class="ai-pane" data-pane="1">
