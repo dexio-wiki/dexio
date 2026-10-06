@@ -1194,7 +1194,8 @@
   // otherwise the panel, like the tree, slides over a graph that stays put.
   function coveredRight(opening) {
     const open = opening || (panel && panel.classList.contains("open"));
-    return wide.matches && open && panel ? panel.offsetWidth : 0;
+    // in focus the graph is framed for the panel it will come back beside
+    return wide.matches && open && panel ? (focusOn() ? focusSideW : panel.offsetWidth) : 0;
   }
 
   // Zoom and centre so the laid-out graph fills the canvas, less any part the
@@ -2371,7 +2372,7 @@
     }
     draw();
     showInTree(n);
-    if (!n) { panel.classList.remove("open"); placeGrip(); shareHere(); return; }
+    if (!n) { setPageFocus(false); panel.classList.remove("open"); placeGrip(); shareHere(); return; }
     const out = [], ins = [];
     for (const l of state.all.links) {
       if (l.source === n.id) out.push(l.target);
@@ -2454,9 +2455,10 @@
       // No Share here: the header's Share shares the open page (Forrest,
       // 2026-09-28: "it's weird seeing the share button above another share
       // button like this"), so there is one Share on the screen.
+      `<div class="head-acts">${focusButton()}` +
       `<button id="close" type="button" aria-label="Close page" title="Close (Esc)">` +
       `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"></path></svg>` +
-      `</button>${tabs ? TABS : ""}` +
+      `</button></div>${tabs ? TABS : ""}` +
       `<nav class="toc toc-pop" aria-label="Contents" hidden></nav></div>` +
       `<div class="panel-body"${tabs ? ' id="panel-view" role="tabpanel" aria-labelledby="tab-page"' : ""}>` +
       `${loading ? LOADING : pageBody(n, body, ins)}</div></div>`;
@@ -2468,11 +2470,13 @@
     panel.scrollTop = 0;
     panel.classList.add("open");
     shareHere();
+    applyPageFocus();
     markStuck();
     spyContents();
     placeGrip();
     if (state.layout !== "radial") revealBesidePanel(n);
     panel.querySelector("#close").onclick = () => select(null);
+    panel.querySelector(".focus-btn").onclick = () => setPageFocus(!pageFocus);
     wireBack();
     wireTabs();
     wirePageLinks();
@@ -3328,7 +3332,8 @@
 
   function placeGrip() {
     if (!grip || !panel) return;
-    const show = wide.matches && panel.classList.contains("open");
+    // nothing to drag in focus: the page has the whole width
+    const show = wide.matches && panel.classList.contains("open") && !focusOn();
     grip.style.display = show ? "block" : "none";
     if (show) grip.style.left = `${wrap.clientWidth - panel.offsetWidth}px`;
     // the contents boundary: the middle of the gap between column and text
@@ -3406,7 +3411,8 @@
   // tree can land underneath one. Slide the graph sideways until the open
   // page sits in the part still showing.
   function revealBesidePanel(n) {
-    if (!wide.matches || !panel || !state.shownIds.has(n.id)) return;
+    // in focus the graph is hidden; leaving focus reveals it (applyPageFocus)
+    if (!wide.matches || !panel || !state.shownIds.has(n.id) || focusOn()) return;
     const p = state.pos.get(n.id);
     if (!p) return;
     const left = coveredLeft(), right = canvas.clientWidth - panel.offsetWidth;
@@ -3444,10 +3450,12 @@
       }, { passive: true });
       window.addEventListener("pagehide", saveTop);
     }
-    // Esc closes the page, unless the key was meant for a form field.
+    // Esc closes the page, unless the key was meant for a form field. In
+    // focus it leaves focus first, back to the page beside the graph.
     window.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || !panel.classList.contains("open")) return;
       if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+      if (focusOn()) { setPageFocus(false); return; }
       select(null);
     });
   }
@@ -3529,6 +3537,75 @@
       setTocWidth(panelVar("--toc-w") + step, panel.offsetWidth);
       saveTocWidth();
     });
+  }
+
+  // ---- focus ---------------------------------------------------------------
+  // The open page fills the window under the header, its text and contents
+  // in the middle at the width they had in the panel, so nothing rewraps
+  // (Forrest, 2026-10-05: "can we get a focus mode for wiki pages?";
+  // shell.html, "focus"). The button left of Close or F turns it on and off,
+  // and Esc leaves it before it would close the page. It holds for this tab
+  // until it is turned off or the page closes: links followed, pages opened
+  // from search and a reload keep it. Wide screens only; on a phone the page
+  // already fills the screen.
+  const FOCUS_KEY = "dexio-focus";
+  const FOCUS_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"></path></svg>';
+  const UNFOCUS_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5"></path></svg>';
+  let pageFocus = false;
+  let focusSideW = 0;            // the panel's width beside the graph, kept for coveredRight
+  try { pageFocus = sessionStorage.getItem(FOCUS_KEY) === "1"; } catch (e) {}
+
+  function focusOn() {
+    return !!(wrap && wrap.classList && wrap.classList.contains("page-focus"));
+  }
+
+  function focusButton() {
+    return `<button class="focus-btn" type="button" aria-label="Focus" aria-pressed="false" ` +
+      `title="Focus on this page (F)">${FOCUS_ICON}</button>`;
+  }
+
+  function setPageFocus(want) {
+    pageFocus = !!want;
+    try {
+      if (pageFocus) sessionStorage.setItem(FOCUS_KEY, "1");
+      else sessionStorage.removeItem(FOCUS_KEY);
+    } catch (e) {}
+    applyPageFocus();
+  }
+
+  function applyPageFocus() {
+    if (!panel || !wrap || !wrap.classList) return;
+    const was = focusOn();
+    const on = pageFocus && wide.matches && panel.classList.contains("open");
+    if (on && !was) focusSideW = panel.offsetWidth;
+    wrap.classList.toggle("page-focus", on);
+    const btn = panel.querySelector(".focus-btn");
+    if (btn) {
+      btn.setAttribute("aria-pressed", String(on));
+      btn.title = on ? "Leave focus (F or Esc)" : "Focus on this page (F)";
+      btn.innerHTML = on ? UNFOCUS_ICON : FOCUS_ICON;
+    }
+    if (on === was) return;
+    placeGrip();
+    spyContents(true);
+    // back beside the graph: bring the open page's node out from under the panel
+    const n = !on && state.selected && state.byId.get(state.selected);
+    if (n && state.layout !== "radial") revealBesidePanel(n);
+  }
+
+  if (panel && wrap) {
+    window.addEventListener("keydown", (e) => {
+      if ((e.key || "").toLowerCase() !== "f" || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (e.repeat || !panel.classList.contains("open") || !wide.matches) return;
+      const t = e.target;
+      if (t && (/^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) || t.isContentEditable)) return;
+      if (document.body.classList.contains("sd-open")) return;   // the Share dialog is up
+      e.preventDefault();
+      setPageFocus(!pageFocus);
+    });
+    if (wide.addEventListener) wide.addEventListener("change", applyPageFocus);
   }
 
   // ---- contents ----------------------------------------------------------

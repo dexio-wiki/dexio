@@ -430,7 +430,8 @@ def test_page_panel_has_a_contents_sidebar_like_wikipedia():
     assert "display: grid" in pinned and "--toc-room" in pinned
     # the column widens the panel rather than narrowing the text
     panel = css.split("  #panel {", 1)[1].split("}", 1)[0]
-    assert "var(--toc-room, 0px)" in panel.split("width:", 1)[1].split(";", 1)[0]
+    assert "var(--toc-room, 0px)" in panel.split("--panel-box:", 1)[1].split(";", 1)[0]
+    assert "width: var(--panel-box);" in panel
     # the resize grip accounts for the column, so the edge follows the pointer
     grip = js.split("function setPanelWidth(", 1)[1].split("\n  }\n", 1)[0]
     assert "tocRoom()" in grip

@@ -544,9 +544,11 @@ __THEME_HEAD__
   #panel {
     position: absolute; top: 0; right: 0;
     --panel-pad: 24px; --panel-max: calc(100vw - 160px);
-    /* --panel-w is the width without the contents column; see "contents" */
-    width: calc(min(var(--panel-w, clamp(440px, calc(40vw + 80px), 680px)),
-                    var(--panel-max) - var(--toc-hold, 0px)) + var(--toc-room, 0px));
+    /* --panel-w is the width without the contents column; see "contents".
+       --panel-box is the whole width, which focus centres (see "focus") */
+    --panel-box: calc(min(var(--panel-w, clamp(440px, calc(40vw + 80px), 680px)),
+                          var(--panel-max) - var(--toc-hold, 0px)) + var(--toc-room, 0px));
+    width: var(--panel-box);
     min-width: min(360px, 92vw); max-width: var(--panel-max);
     height: 100%; background: var(--panel); border-left: 1px solid var(--line);
     padding: 0 var(--panel-pad) var(--panel-pad); overflow: auto; overscroll-behavior: contain;
@@ -1135,20 +1137,50 @@ __THEME_HEAD__
   .md .fn-back sup { font-size: .75em; }
   .md .fn-lit { background: color-mix(in srgb, var(--accent) 16%, transparent); border-radius: 3px; }
   /* Close: a quiet icon button that fills in on hover, rather than a boxed
-     word. Esc closes too (graph.js). */
-  #panel #close {
+     word. Esc closes too (graph.js). Focus sits left of it, drawn the same
+     way; the two share a box so the head's layouts place them as one. */
+  #panel .head-acts { flex: none; display: flex; gap: 2px; }
+  #panel #close, #panel .focus-btn {
     flex: none; display: inline-grid; place-items: center;
     width: 34px; height: 34px; padding: 0; cursor: pointer;
     border: 0; border-radius: 8px; background: transparent; color: var(--muted);
     transition: background .12s ease, color .12s ease;
   }
-  #panel #close svg { width: 18px; height: 18px; fill: none; stroke: currentColor;
-                      stroke-width: 2; stroke-linecap: round; }
-  #panel #close:hover { background: var(--sunken); color: var(--text); }
-  html[data-mode="dark"] #panel #close:hover { background: var(--line); }
-  #panel #close:active { transform: scale(.94); }
-  #panel #close:focus-visible {
+  #panel #close svg, #panel .focus-btn svg {
+    width: 18px; height: 18px; fill: none; stroke: currentColor;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #panel .focus-btn svg { width: 17px; height: 17px; }
+  #panel #close:hover, #panel .focus-btn:hover { background: var(--sunken); color: var(--text); }
+  html[data-mode="dark"] #panel #close:hover,
+  html[data-mode="dark"] #panel .focus-btn:hover { background: var(--line); }
+  #panel #close:active, #panel .focus-btn:active { transform: scale(.94); }
+  #panel #close:focus-visible, #panel .focus-btn:focus-visible {
     outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+
+  /* ---- focus ----
+     Forrest, 2026-10-05: "can we get a focus mode for wiki pages?" The open
+     page takes the whole window under the header: the graph, the folders and
+     the controls over the graph go, and the page's text and its contents sit
+     in the middle. The text keeps the width it had in the panel, so nothing
+     rewraps and the reading position holds; drag the panel wider first for
+     longer lines. The header stays, as it does over a page on a phone: search
+     and Share for the open page live there. The button left of Close, or F,
+     turns it on and off; Esc leaves it before it would close the page; links
+     followed and pages opened from search stay in it; closing the page ends
+     it. Phones have no button: the page already fills the screen there. */
+  #panel .focus-btn { display: none; }
+  @media (min-width: 721px) {
+    #panel .focus-btn { display: inline-grid; }
+    #wrap.page-focus > :not(#panel, #toast) { visibility: hidden; }
+    #wrap.page-focus #panel {
+      --focus-side: max(0px, calc((100% - var(--panel-box)) / 2));
+      left: 0; width: auto; min-width: 0; max-width: none;
+      border-left-color: transparent; box-shadow: none;
+      padding-left: calc(var(--focus-side) + var(--panel-pad));
+      padding-right: calc(var(--focus-side) + var(--panel-pad));
+    }
+    #wrap.page-focus #panel.toc-pinned { padding-left: var(--focus-side); }
   }
 
   /* ---- going back (graph.js, "going back") ----
@@ -1165,8 +1197,8 @@ __THEME_HEAD__
   }
   #panel .panel-head.has-back .back-row { grid-row: 1; grid-column: 1 / 3; display: flex;
                                           min-width: 0; margin-bottom: 2px; }
-  #panel .panel-head.has-back #close { grid-row: 1; grid-column: 3; align-self: center;
-                                       margin: -8px 0; }
+  #panel .panel-head.has-back .head-acts { grid-row: 1; grid-column: 3; align-self: center;
+                                           margin: -8px 0; }
   #panel .panel-head.has-back .toc-btn { grid-row: 2; grid-column: 1; }
   #panel .panel-head.has-back .panel-title { grid-row: 2; grid-column: 2 / 4; }
   #panel:not(.has-toc) .panel-head.has-back .panel-title,
@@ -1607,7 +1639,8 @@ __THEME_HEAD__
     }
     #panel #close { width: 40px; height: 40px; margin-top: -4px; }
     #panel .toc-btn { width: 40px; height: 40px; margin-top: -4px; }
-    #panel .panel-head.has-back #close { margin: -11px 0; }
+    #panel .panel-head.has-back .head-acts { margin: -11px 0; }
+    #panel .panel-head.has-back #close { margin: 0; }
     /* the back line's text is small; its tap area is not */
     #panel .back-line { margin: -10px 0 -10px -2px; padding: 10px 2px; }
     #panel .panel-title h2 { font-size: 22px; }

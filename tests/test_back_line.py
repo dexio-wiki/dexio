@@ -64,7 +64,7 @@ def test_the_line_is_the_heads_first_row_and_stays_across_tabs():
     css = SHELL.split("---- going back", 1)[1].split("\n\n", 1)[0]
     for rule in ("grid-template-columns: auto minmax(0, 1fr) auto",
                  ".back-row { grid-row: 1; grid-column: 1 / 3;",
-                 "#close { grid-row: 1; grid-column: 3; align-self: center;",
+                 ".head-acts { grid-row: 1; grid-column: 3; align-self: center;",
                  ".toc-btn { grid-row: 2; grid-column: 1; }",
                  ".panel-title { grid-row: 2; grid-column: 2 / 4; }",
                  "#panel:not(.has-toc) .panel-head.has-back .panel-title"):
