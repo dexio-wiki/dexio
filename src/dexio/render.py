@@ -235,29 +235,49 @@ def ws_tile(ws: dict, cls: str = "wsm-tile") -> str:
 
 
 def workspace_menu(workspaces: list[dict], current: int | None, href, *, menu_id: str,
-                   settings: bool = False, shared: list[dict] | None = None) -> str:
+                   settings: bool = False, shared: list[dict] | None = None,
+                   viewing: dict | None = None) -> str:
     """href(ws) is where picking a workspace goes. settings adds a link to the
     current workspace's settings (the graph; Settings itself does not need one).
     shared: workspaces that share something with this person without them being
-    a member (shares.shared_with), listed under Shared with you."""
+    a member (shares.shared_with), listed under Shared with you.
+    viewing: a workspace this person is reading as a guest, {id, handle, name}.
+    The button shows it, it is the one checked (under Shared with you, added there
+    if only a public link brought them), and their own workspaces are a click away
+    (Forrest, 2026-10-06: a folder shared to his other address opened View only
+    with no way back to his own workspace). No settings link: it would be the
+    other workspace's."""
     esc = html.escape
-    ws = next((w for w in workspaces if w["id"] == current), workspaces[0] if workspaces else None)
+    shared = list(shared or [])
+    if viewing:
+        known = next((s for s in shared if s["handle"] == viewing["handle"]), None)
+        if known:
+            viewing = known
+        else:
+            shared.insert(0, viewing)
+        ws = viewing
+        settings = False
+    else:
+        ws = next((w for w in workspaces if w["id"] == current),
+                  workspaces[0] if workspaces else None)
     if not ws:
         return ""
     # A server with no Stripe key sells no plans (server.db.plans_apply), so it
     # shows none beside the names.
     sells = bool(os.environ.get("STRIPE_SECRET_KEY"))
     plan = lambda w: str(w.get("plan") or "").title() if sells else ""  # noqa: E731
+    checked = lambda w: "true" if w is ws else "false"  # noqa: E731
     rows = "".join(
         f'<a class="wsm-item" role="menuitemradio" tabindex="-1" data-key="ws:{esc(w["handle"])}"'
-        f' aria-checked="{"true" if w["id"] == ws["id"] else "false"}" href="{esc(href(w))}">'
+        f' aria-checked="{checked(w)}" href="{esc(href(w))}">'
         f'{ws_tile(w)}<span class="wsm-name">{esc(w["name"])}</span>'
         f'<span class="wsm-meta">{esc(plan(w))}</span>{CHECK_SVG}</a>' for w in workspaces)
     if shared:
         rows += ('<div class="wsm-rule"></div><div class="wsm-head">Shared with you</div>' + "".join(
-            f'<a class="wsm-item" role="menuitem" tabindex="-1" data-key="shared:{esc(s["handle"])}"'
-            f' href="/w/{esc(s["handle"])}">{ws_tile(s)}<span class="wsm-name">{esc(s["name"])}'
-            f'</span><span class="wsm-meta">View only</span></a>' for s in shared))
+            f'<a class="wsm-item" role="menuitemradio" tabindex="-1" data-key="shared:{esc(s["handle"])}"'
+            f' aria-checked="{checked(s)}" href="/w/{esc(s["handle"])}">{ws_tile(s)}'
+            f'<span class="wsm-name">{esc(s["name"])}</span>'
+            f'<span class="wsm-meta">View only</span>{CHECK_SVG}</a>' for s in shared))
     link = (f'<a class="wsm-item wsm-quiet" role="menuitem" tabindex="-1" data-key="settings"'
             f' href="/settings?w={esc(ws["handle"])}">{GEAR_SVG}'
             f'<span class="wsm-name">Settings for {esc(ws["name"])}</span></a>'
@@ -888,10 +908,19 @@ def server_page(api_base: str, title: str = "Dexio",
         brand = f'<a class="brand" href="https://dexio.wiki" title="Dexio">{logo(BRAND_HEIGHT)}</a>'
     if guest:
         # What the reader opened: the sharing workspace, by name, marked View only.
-        tile = ws_tile({"id": sum(map(ord, guest["handle"])), "name": guest["name"]})
-        picker = (f'<div id="crumbs"><span class="guest-ws" title="{esc(guest["name"])}">{tile}'
-                  f'<span class="wsm-label">{esc(guest["name"])}</span></span>'
-                  f'<span class="guest-tag">View only</span></div>')
+        # Signed in, it is the workspace menu's button, so their own workspaces
+        # are one click away; signed out there is nothing to switch to.
+        viewing = {"id": sum(map(ord, guest["handle"])), "handle": guest["handle"],
+                   "name": guest["name"]}
+        tag = '<span class="guest-tag">View only</span>'
+        if account:
+            wsm = workspace_menu(workspaces, None, lambda w: f"/?w={w['handle']}",
+                                 menu_id="ws-switch", shared=shared, viewing=viewing)
+            picker = f'<div id="crumbs">{wsm}{tag}</div>'
+        else:
+            picker = (f'<div id="crumbs"><span class="guest-ws" title="{esc(guest["name"])}">'
+                      f'{ws_tile(viewing)}<span class="wsm-label">{esc(guest["name"])}</span>'
+                      f'</span>{tag}</div>')
         listed = [{"id": guest["handle"], "name": guest["name"], "plan": ""}]
         current_handle = guest["handle"]
         if account:

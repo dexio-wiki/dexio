@@ -183,6 +183,49 @@ def test_sharing_by_email_binds_to_the_account_that_opens_the_link(app, sent):
     assert eve.get(f"/api/v1/graph?w={handle}").status_code == 404
 
 
+def test_a_signed_in_guest_can_switch_back_to_their_own_workspace(app, sent):
+    """Forrest, 2026-10-06: a folder shared from one of his accounts to the other
+    opened View only, and the header offered no way back to his own workspace."""
+    c, _tok, handle = owner_with_wiki(app)
+    share(c, handle, "folder", "notes", "bea@example.com")
+    bea = browser(app)
+    signup(bea, "bea@example.com")
+    own = bea.get("/api/v1/workspaces").json()["current"]
+    assert bea.get(f"/s/{code_of(sent[-1][1])}").status_code == 303
+    page = bea.get(f"/w/{handle}?folder=notes", headers={"accept": "text/html"}).text
+    crumbs = page.split('id="crumbs"', 1)[1].split("</header>", 1)[0]
+    # the header is the workspace menu, showing the shared workspace, View only
+    assert 'id="ws-switch-button"' in crumbs and "owner&#x27;s Workspace" in crumbs
+    assert 'class="guest-tag">View only' in crumbs
+    # her own workspace is in it, unchecked; the shared one is the one checked
+    assert f'data-key="ws:{own}" aria-checked="false" href="/?w={own}"' in crumbs
+    assert f'data-key="shared:{handle}" aria-checked="true" href="/w/{handle}"' in crumbs
+    assert "New workspace" in crumbs
+    # no settings link for a workspace she is not in
+    assert "Settings for owner" not in crumbs
+    # and picking hers takes her home
+    home = bea.get(f"/?w={own}", headers={"accept": "text/html"}).text
+    assert f'data-key="ws:{own}" aria-checked="true"' in home
+    assert f'data-key="shared:{handle}" aria-checked="false"' in home
+
+
+def test_a_public_link_signed_in_lists_the_workspace_signed_out_does_not(app):
+    c, _tok, handle = owner_with_wiki(app)
+    public(c, handle, "page", "notes/plan")
+    # signed in, not invited: the menu still has her own workspaces, and the one
+    # she is reading, checked, under Shared with you
+    cat = browser(app)
+    signup(cat, "cat@example.com")
+    own = cat.get("/api/v1/workspaces").json()["current"]
+    page = cat.get(f"/w/{handle}/notes/plan", headers={"accept": "text/html"}).text
+    assert f'data-key="ws:{own}" aria-checked="false"' in page
+    assert f'data-key="shared:{handle}" aria-checked="true"' in page
+    # signed out: the name and View only, nothing to switch to
+    anon = browser(app).get(f"/w/{handle}/notes/plan", headers={"accept": "text/html"}).text
+    assert 'id="ws-switch-button"' not in anon and 'class="guest-ws"' in anon
+    assert 'class="guest-tag">View only' in anon
+
+
 def test_only_the_address_it_was_sent_to_can_claim_the_link(app, sent):
     """Forrest, 2026-09-28: "the link should not be claim-able by anyone other
     than the user it was intended for". He opened his own share email in the
