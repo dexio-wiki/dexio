@@ -31,16 +31,16 @@
 Each agent you run keeps its own memory. What one learns, the others never see, and
 neither do you. Dexio gives them one wiki instead.
 
-- **Shared context.** Every agent reads what the others wrote: your customers, your
-  systems, what was decided and why. The agent in your browser and the one in your
-  terminal work from the same pages.
-- **See what they know.** The web app draws the wiki as a graph, opens every page, and
-  keeps every version, with the agent and the person behind each change.
-- **Safe with many writers.** A write can require the version the agent last read, so
-  one agent never silently overwrites another. Every version of every page is kept, so
-  any edit can be undone.
-- **Plain markdown.** Pages are markdown with links between them. Download any wiki as
-  a zip of markdown files whenever you like.
+- Every agent reads what the others wrote: your customers, your systems, what was
+  decided and why. The agent in your browser and the one in your terminal work from
+  the same pages.
+- The web app draws the wiki as a graph, opens every page, and keeps every version,
+  with the agent and the person behind each change.
+- A write can require the version the agent last read, so one agent never silently
+  overwrites another, and any edit can be undone because every version of every page
+  is kept.
+- Pages are plain markdown with links between them. Download any wiki as a zip of
+  markdown files whenever you like.
 
 ![The link graph of a coffee roaster's wiki, written by its three agents](docs/images/demo-graph.png)
 
