@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import socket
 import threading
 import time
@@ -155,3 +156,24 @@ def test_path_traversal_refused(server):
 
 def test_rest_routes_still_win(server):
     assert httpx.get(f"{server['base']}/healthz").json()["ok"] is True
+
+
+def test_slow_tool_call_is_logged_without_its_text(server, caplog, monkeypatch):
+    """A slow call names its tool, caller and argument shapes, never the text."""
+    from dexio.server import mcp_server
+    monkeypatch.setattr(mcp_server, "SLOW_TOOL_SECONDS", 0.0)
+    with caplog.at_level(logging.WARNING, logger="dexio.mcp"):
+        payload(call(server, server["fleet"], "search_pages",
+                     {"query": "secret drift words", "regex": False}))
+    lines = [r.getMessage() for r in caplog.records if r.name == "dexio.mcp"]
+    hit = [m for m in lines if m.startswith("slow tool call: search_pages took")]
+    assert hit, lines
+    assert "(ok)" in hit[0] and "caller='fleet'" in hit[0]
+    assert '"query": "str[18]"' in hit[0] and '"regex": false' in hit[0]
+    assert not any("secret" in m for m in lines)
+
+
+def test_fast_tool_call_is_not_logged(server, caplog):
+    with caplog.at_level(logging.WARNING, logger="dexio.mcp"):
+        payload(call(server, server["fleet"], "list_pages"))
+    assert not [r for r in caplog.records if r.name == "dexio.mcp"]

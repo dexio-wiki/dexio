@@ -34,11 +34,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import logging
 import os
 import re
 import time
 from typing import Annotated, Literal
 from urllib.parse import quote
+
+import anyio.to_thread
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -54,6 +57,8 @@ from ..parse import (MDLINK, WIKILINK, Page, _normalise, _resolve, basename, fin
 from ..parse import heading_anchors
 from ..parse import outline as page_outline
 from . import auth, db, files, oauth, shares
+
+log = logging.getLogger("dexio.mcp")
 
 MCP_PATH = "/mcp"
 # An abuse limit, not a design one: history stores diffs, so a big page costs
@@ -81,11 +86,33 @@ MAX_STALE_LISTED = 50
 # that the call says how many remain and which folders hold them.
 LIST_PAGES_DEFAULT = 200
 LIST_PAGES_MAX = 1000
+# A tool call that takes this long is logged with its tool, caller, workspace and
+# argument shapes (2026-10-07: one call held the server for two minutes and nothing
+# recorded which it was). The server is one process, so a slow call can stall the rest.
+SLOW_TOOL_SECONDS = 2.0
 # MCP methods Dexio does not serve: it has no prompts or resources, and the SDK
 # advertises both unless their handlers are removed (see build_mcp).
 UNSERVED_METHODS = ("prompts/list", "prompts/get", "resources/list",
                     "resources/templates/list", "resources/read",
                     "resources/subscribe", "resources/unsubscribe")
+
+
+def _arg_shape(arguments: dict | None) -> dict:
+    """What a call was asked, without the caller's text: flags and numbers as given,
+    the workspace handle as given, other strings and lists by their length."""
+    out: dict = {}
+    for k, v in (arguments or {}).items():
+        if v is None or isinstance(v, (bool, int, float)):
+            out[k] = v
+        elif k == "workspace" and isinstance(v, str) and len(v) <= 200:
+            out[k] = v
+        elif isinstance(v, str):
+            out[k] = f"str[{len(v)}]"
+        elif isinstance(v, (list, tuple, dict)):
+            out[k] = f"{type(v).__name__}[{len(v)}]"
+        else:
+            out[k] = type(v).__name__
+    return out
 
 INSTRUCTIONS = """\
 Dexio is this workspace's shared wiki: the markdown pages its people and agents keep about
@@ -404,6 +431,35 @@ def build_mcp(conn) -> MCPServer:
             # second lock in case the endpoint is ever mounted without it.
             raise ToolError("unauthorized: send Authorization: Bearer <API key>")
         return row
+
+    plain_call_tool = server.call_tool
+
+    async def timed_call_tool(name, arguments, context=None):
+        """Every tool call goes through here; one that takes SLOW_TOOL_SECONDS or more
+        is logged once it ends, so the next slow call can be named."""
+        start = time.monotonic()
+        outcome = "raised"
+        try:
+            result = await plain_call_tool(name, arguments, context)
+            outcome = "error" if getattr(result, "is_error", False) else "ok"
+            return result
+        finally:
+            took = time.monotonic() - start
+            if took >= SLOW_TOOL_SECONDS:
+                who, home = "?", "?"
+                try:
+                    # The token lookup takes db.LOCK; off the event loop, so a lock
+                    # held elsewhere cannot stall every other request here.
+                    row = await anyio.to_thread.run_sync(caller, context)
+                    who, home = row["name"], row["workspace_id"]
+                except Exception:  # noqa: BLE001 - the log line must not fail the call
+                    pass
+                log.warning("slow tool call: %s took %.1fs (%s) caller=%r home_workspace=%s"
+                            " args=%s", name, took, outcome, who, home,
+                            json.dumps(_arg_shape(arguments), sort_keys=True))
+
+    # The SDK's call handler looks call_tool up on the server at each call.
+    server.call_tool = timed_call_tool
 
     def acting(row, workspace: str | None) -> tuple:
         """Where a call acts: (row, access, workspace handle). A key or sign-in acts as
