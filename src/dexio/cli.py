@@ -82,6 +82,20 @@ def cmd_signups(args) -> int:
     return 0
 
 
+def cmd_setup_trail(args) -> int:
+    """One account's setup timeline and whether an agent got through (server/setup_events.py)."""
+    import json
+    from .server import auth, db, setup_events
+    conn = db.connect(args.db)
+    setup_events.init(conn)
+    user = auth.user_by_email(conn, args.email)
+    if not user:
+        print(f"no such user: {args.email}", file=sys.stderr)
+        return 1
+    print(json.dumps(setup_events.trail(conn, user["id"]), indent=1, default=str))
+    return 0
+
+
 def cmd_copy_db(args) -> int:
     from .server import copydb
     if not args.to:
@@ -119,6 +133,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--db", default=os.environ.get("DEXIO_DATABASE_URL")
                    or os.environ.get("DEXIO_DB", "dexio.db"))
     s.set_defaults(func=cmd_signups)
+
+    s = sub.add_parser("setup-trail", help="what one account did while connecting an agent")
+    s.add_argument("email")
+    s.add_argument("--db", default=os.environ.get("DEXIO_DATABASE_URL")
+                   or os.environ.get("DEXIO_DB", "dexio.db"))
+    s.set_defaults(func=cmd_setup_trail)
 
     s = sub.add_parser("copy-db", help="copy a SQLite database into an empty Postgres one")
     s.add_argument("source", help="the SQLite file")

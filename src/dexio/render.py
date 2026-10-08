@@ -563,6 +563,7 @@ APP_JS = r"""
   // line (Forrest, 2026-09-27, as on Agents).
   function connectFlow() {
     const box = flow("Connect your agent");
+    if (window.dexioSetup) window.dexioSetup("connect_shown", "graph");
     box.append(el("p", "ob-lead", "Your wiki is empty. Which agent do you use? Once it is " +
       "connected, it saves notes here and reads them back later."));
     // the stepper (ais.py): Choose your agent, Connect, First page, one at a time
@@ -595,6 +596,7 @@ APP_JS = r"""
   // for a teammate whose own agent is not connected yet.
   function readyFlow() {
     const box = flow("Your wiki is empty");
+    if (window.dexioSetup) window.dexioSetup("ready_shown", "graph");
     box.append(el("p", "ob-lead", "Ask your agent to save its first page. The graph " +
       "appears here when it lands."));
     const pre = el("pre"), code = el("code", "agent-prompt", FIRST);

@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from .. import VERSION, ais, okf, themes
 from ..render import server_page
 from . import (auth, billing, copies, db, device, erase, files, mail, membership, oauth,
-               pages, preview, shares, signups, social, ssr)
+               pages, preview, setup_events, shares, signups, social, ssr)
 from . import desktop as desktop_signin
 from . import history as page_history
 from .ratelimit import Limiter, client_ip
@@ -55,6 +55,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
     oauth.init(conn)
     device.init(conn)
     signups.init(conn)
+    setup_events.init(conn)
     files.init(conn)
     # Links to files (raw/deck.pdf) stopped counting as page links when files
     # arrived; recompute stored links once so they stop showing as broken.
@@ -91,6 +92,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
     device_ip = Limiter(20, 600)       # agent sign-ins started per address per 10 minutes
     device_user = Limiter(30, 600)     # agent codes looked up or answered per user
     copy_user = Limiter(10, 600)       # copies made per person per 10 minutes
+    setup_user = Limiter(120, 3600)    # setup-screen events per person per hour
 
     # ---- identity ------------------------------------------------------
     def session_user(request: Request) -> str | None:
@@ -168,6 +170,27 @@ def get_app(db_path: str | None = None) -> FastAPI:
         (an admin's, a fleet's) record no creator (Forrest, 2026-09-27)."""
         return (any(t["last_used"] for t in db.list_tokens(conn, workspace_id))
                 or bool(oauth.connections(conn, workspace_id)))
+
+    def note_setup(user_id: int, event: str, detail: str = "",
+                   workspace_id: int | None = None) -> None:
+        """One step of someone connecting an agent (setup_events). Never fails the
+        request it rides on."""
+        try:
+            setup_events.record(conn, user_id, event, detail, workspace_id)
+        except Exception:  # noqa: BLE001 - telemetry must not break setup
+            log.exception("could not record setup event %s", event)
+
+    def setup_workspace(request: Request, user: dict) -> int | None:
+        """current_workspace's id, or None for someone in no workspace (Settings >
+        Agents is the account's), where current_workspace would refuse."""
+        mine = db.workspaces_for_user(conn, user["id"])
+        if not mine:
+            return None
+        for wanted in (request.query_params.get("w"), request.cookies.get(WS_COOKIE)):
+            found = db.find_workspace(mine, wanted)
+            if found:
+                return found["id"]
+        return mine[0]["id"]
 
     def _set_session(response: Response, email: str) -> None:
         response.set_cookie(
@@ -1223,9 +1246,10 @@ def get_app(db_path: str | None = None) -> FastAPI:
                       view: str = Query(default="agents")):
         """The steps for one AI, as HTML for the connect flow. A GET never mints a key.
         view is where they show: "graph" (an empty wiki) or Settings > Agents."""
-        browser_user(request)
+        user = browser_user(request)
         if client not in pages.CLIENTS:
             raise HTTPException(400, "unknown client")
+        note_setup(user["id"], "agent_picked", f"{client} {view}", setup_workspace(request, user))
         return {"client": client, "html": pages.connect_steps(client, base_url(request), view=view)}
 
     @app.post(f"{API}/connect")
@@ -1249,9 +1273,34 @@ def get_app(db_path: str | None = None) -> FastAPI:
         # "Something else" names the tile, not the agent; its key reads "AI agent".
         name = "AI agent" if client == "other" else pages.CLIENTS[client][0]
         token = db.create_token(conn, name, workspace_id=ws["id"], created_by=user["id"])
+        note_setup(user["id"], "key_minted", client, ws["id"])
         return {"client": client,
                 "html": pages.connect_steps(client, base_url(request), token=token,
                                             view=str(body.get("view", "")))}
+
+    @app.post(f"{API}/setup/event")
+    async def setup_event(request: Request):
+        """What only the browser sees while someone connects an agent: the setup
+        screen shown, a step, a copy, the tab hidden, shown again or left
+        (setup_events.BROWSER). Sent by sendBeacon, so the answer is never read."""
+        if not same_origin(request):
+            raise HTTPException(403, "cross-site request refused")
+        user = browser_user(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        body = body if isinstance(body, dict) else {}
+        event = str(body.get("event", ""))
+        if event not in setup_events.BROWSER:
+            raise HTTPException(400, "unknown event")
+        if not setup_user.allow(f"setup:{user['id']}"):
+            return Response(status_code=204)
+        detail = setup_events.clean(body.get("detail"), 30)
+        if event == "connect_shown":
+            detail = f"{detail} {setup_events.device_of(request.headers.get('user-agent'))}"
+        note_setup(user["id"], event, detail, setup_workspace(request, user))
+        return Response(status_code=204)
 
     @app.post(f"{API}/workspace/name")
     async def name_workspace(request: Request):
@@ -1275,6 +1324,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
             db.rename_workspace(conn, ws["id"], name)
         except ValueError:
             raise HTTPException(400, "give the workspace a name") from None
+        note_setup(user["id"], "named", "kept" if name == ws.get("name") else "changed", ws["id"])
         return {"id": ws["handle"], "name": name[:80]}
 
     # ---- settings ------------------------------------------------------
@@ -1954,8 +2004,10 @@ def get_app(db_path: str | None = None) -> FastAPI:
         if not db.workspaces_for_user(conn, user["id"]):
             create_account_workspace(user)
         mine = db.workspaces_for_user(conn, user["id"])
+        current = current_workspace(request, user)["id"]
+        note_setup(user["id"], "device_shown", found["client_name"], current)
         return HTMLResponse(pages.device_page(found["client_name"], code, user["email"], mine,
-                                              current_workspace(request, user)["id"]))
+                                              current))
 
     @app.post("/device")
     async def device_submit(request: Request):
@@ -1976,6 +2028,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
                 code=code), status_code=400)
         if f.get("action") != "allow":
             device.answer(conn, code, False)
+            note_setup(user["id"], "device_denied", found["client_name"])
             return HTMLResponse(pages.notice_page(
                 "Agent not connected", f"Denied. {found['client_name']} was not given access.",
                 "/", "Open Dexio", status_error=False))
@@ -1987,6 +2040,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
             return HTMLResponse(pages.device_entry_page(
                 error="That code expired or was already used. Ask your agent to start again.",
                 code=code), status_code=400)
+        note_setup(user["id"], "device_approved", found["client_name"], ws)
         response = HTMLResponse(pages.notice_page(
             "Agent connected", f"Done. Go back to {found['client_name']}; it finishes the "
             "setup on its own.", "/", "Open Dexio", status_error=False))
@@ -2367,6 +2421,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
             mine = db.workspaces_for_user(conn, user["id"])
         client, params = found
         current = current_workspace(request, user)["id"]
+        note_setup(user["id"], "consent_shown", client.client_name or "", current)
         return HTMLResponse(pages.consent_page(
             client.client_name or "An app", urlsplit(params["redirect_uri"]).netloc,
             user["email"], mine, current, req))
@@ -2382,8 +2437,11 @@ def get_app(db_path: str | None = None) -> FastAPI:
         if not user:
             return RedirectResponse(f"/login?next={quote('/oauth/consent?req=' + req)}",
                                     status_code=303)
+        found = oauth.pending(conn, req)
+        app_name = (found[0].client_name or "") if found else ""
         if f.get("action") != "allow":
             target = oauth.deny(conn, req, issuer)
+            note_setup(user["id"], "consent_denied", app_name)
             return RedirectResponse(target or "/", status_code=303)
         picked = db.find_workspace(db.workspaces_for_user(conn, user["id"]), f.get("workspace"))
         if not picked:
@@ -2394,6 +2452,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
         except ValueError as e:
             return HTMLResponse(pages.notice_page("Sign-in expired", str(e).capitalize() + "."),
                                 status_code=400)
+        note_setup(user["id"], "consent_approved", app_name, ws)
         return RedirectResponse(target, status_code=303)
 
     @app.post("/settings/apps/{client_id}/disconnect", response_class=HTMLResponse)

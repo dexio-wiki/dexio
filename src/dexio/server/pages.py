@@ -1238,6 +1238,9 @@ CONNECT_JS = r"""
   let client = box.dataset.client || "";
   const flow = box.querySelector(".ai-flow");
   const enc = encodeURIComponent;
+  // setup_events: the panel is always open, so every visit counts as one showing,
+  // with the AI a ?connect link picked, if any.
+  if (window.dexioSetup) window.dexioSetup("connect_shown", "agents" + (client ? ":" + client : ""));
 
   function el(tag, cls, text) {
     const n = document.createElement(tag);

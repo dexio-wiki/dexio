@@ -212,11 +212,40 @@ CSS += """
 # Moves between steps for any .ai-flow on the page: a click on anything with
 # data-go (the progress bar, Back, Next). The pickers call dexioSteps.picked when
 # an agent is chosen and dexioSteps.go to show a step.
+# It also reports what only the browser sees while someone connects an agent
+# (server/setup_events.py): window.dexioSetup(event, detail) for the screens to
+# call, plus a step moved, a copy button, and the tab hidden, shown or closed while
+# a setup screen is open. sendBeacon, so a closing tab still gets its line in.
 STEPS_JS = r"""
 (function () {
   if (window.dexioSteps) return;
+  let sent = 0;
+  function note(event, detail) {
+    if (window.DEXIO_GUEST || sent >= 60) return;
+    sent += 1;
+    const box = document.getElementById("connect");
+    const w = window.DEXIO_WORKSPACE || (box && box.dataset.ws) || "";
+    const url = (window.DEXIO_API || "/api/v1") + "/setup/event?w=" + encodeURIComponent(w);
+    const body = JSON.stringify({event: event, detail: detail || ""});
+    try {
+      if (navigator.sendBeacon &&
+          navigator.sendBeacon(url, new Blob([body], {type: "application/json"}))) return;
+      fetch(url, {method: "POST", keepalive: true, body: body,
+                  headers: {"Content-Type": "application/json"}}).catch(() => {});
+    } catch (err) {}
+  }
+  const inSetup = () => !!document.querySelector("#onboard, #connect .ai-flow");
+  document.addEventListener("visibilitychange", () => {
+    if (inSetup()) note(document.hidden ? "hidden" : "visible");
+  });
+  window.addEventListener("pagehide", () => { if (inSetup()) note("left"); });
+  document.addEventListener("click", e => {
+    const c = e.target.closest("[data-copy]");
+    if (c && c.closest("#onboard, #connect")) note("copied", c.dataset.copy);
+  });
   function go(flow, n) {
     if (n > 1 && !flow.dataset.client) return;
+    if (flow.dataset.at !== String(n)) note("step", String(n));
     flow.dataset.at = String(n);
     for (const li of flow.querySelectorAll(".ai-steps > li")) {
       const k = Number(li.dataset.n);
@@ -239,5 +268,6 @@ STEPS_JS = r"""
     go(flow, Number(b.dataset.go));
   });
   window.dexioSteps = {go, picked};
+  window.dexioSetup = note;
 })();
 """

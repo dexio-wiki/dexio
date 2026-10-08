@@ -3,6 +3,44 @@
 	request_body {
 		max_size 32MB
 	}
+
+	# An access log for signing up, signing in and connecting agents, kept on the data
+	# volume (DEXIO_DATA_DIR/caddy/logs) across releases for 30 days. The app's own
+	# log has no address or browser and starts over with every container, so a
+	# connection that failed before anyone signed in could not be traced (2026-10-08).
+	# Only these paths are logged: never wiki pages, their addresses or the web API
+	# that reads them. Codes, states and page paths in query strings are dropped,
+	# Cookie and Authorization are redacted by Caddy itself, a Referer keeps its
+	# origin only, and redirect targets (which carry OAuth codes) are not kept.
+	@unlogged not path / /signup /login /login/* /auth/* /joined /welcome /device /logout /oauth/* /authorize /token /register /revoke /.well-known/* /mcp /mcp/* /api/v1/connect /api/v1/graph /api/v1/workspace/name /api/v1/setup/* /api/v1/device/* /api/v1/me
+	log_skip @unlogged
+	log {
+		output file /data/logs/access.log {
+			roll_size 20MiB
+			roll_keep 50
+			roll_keep_for 720h
+		}
+		format filter {
+			request>uri query {
+				delete code
+				delete state
+				delete req
+				delete next
+				delete token
+				delete code_challenge
+				delete user_code
+				delete email
+				delete key
+				delete folder
+				delete project
+				delete path
+				delete page
+			}
+			request>headers>Referer regexp "^(https?://[^/?#]+).*$" "${1}"
+			resp_headers>Location delete
+		}
+	}
+
 	reverse_proxy dexio:8080 {
 		# A release restarts the app container, which takes a second or two.
 		# Hold requests and retry the connection rather than answering 502.

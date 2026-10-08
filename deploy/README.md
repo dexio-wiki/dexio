@@ -72,6 +72,14 @@ Everything is under `DEXIO_DATA_DIR`: `dexio/dexio.db` (SQLite) and `dexio/files
 or your Postgres database and bucket. Back those up. Each wiki can also be
 downloaded as a zip of markdown files from Settings or `GET /api/v1/export`.
 
+## Access log
+
+Caddy writes an access log to `caddy/logs/access.log` under `DEXIO_DATA_DIR` and keeps 30
+days of it. It logs signing up, signing in and connecting agents; wiki pages and the API
+calls that read them are left out. Caddy drops sign-in codes and page paths from the
+addresses it logs and redacts cookies and keys. To turn the log off, remove the `log_skip`
+line and the `log` block from the `Caddyfile`.
+
 ## Files
 
 | File | Purpose |
