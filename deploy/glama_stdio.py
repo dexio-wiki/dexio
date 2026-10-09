@@ -1,17 +1,18 @@
 """Run Dexio as a stdio MCP server, for Glama's checks.
 
 Glama starts a listed server over stdio (wrapped in mcp-proxy) and asks it for its tools.
-Dexio serves MCP over HTTP, and every request needs a key. So this starts a throwaway
-copy on loopback with its own SQLite file and one account, mints a key for that account,
-and hands stdio to mcp-remote, which forwards each message to the copy with the key.
-Everything it makes is deleted when it exits. Not for production: run the server itself
-(deploy/README.md).
+Dexio serves MCP over HTTP, and every request needs a key. So this starts a copy of the
+server on loopback, built from this checkout, with its own SQLite file and one account,
+mints a key for that account, and relays each stdio message to the copy with the key.
+Nothing leaves the machine, and everything it makes is deleted when it exits. Not for
+production: run the server itself (deploy/README.md).
 
-Glama build steps: `uv sync --locked --extra server` and `npm install -g mcp-remote@0.14.3`.
+Glama build step: `uv sync --locked --extra server`.
 Command: `uv run --no-sync python deploy/glama_stdio.py`.
 """
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import shutil
@@ -21,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 EMAIL = "glama-check@example.com"
@@ -56,10 +58,41 @@ def mint_key(db_path: str) -> str:
     return db.create_token(conn, "Glama check", None, user["id"])
 
 
+def replies(body: bytes, content_type: str) -> list[str]:
+    """The JSON-RPC messages in one HTTP answer: a JSON body, or an event stream."""
+    text = body.decode("utf-8").strip()
+    if not text:
+        return []
+    if content_type.startswith("text/event-stream"):
+        return [line[5:].strip() for line in text.splitlines() if line.startswith("data:")]
+    return [json.dumps(json.loads(text))]
+
+
+def relay(url: str, key: str) -> None:
+    """One JSON-RPC message per stdin line, POSTed in order; answers go to stdout."""
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+               "Accept": "application/json, text/event-stream"}
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        req = urllib.request.Request(url, data=line.encode("utf-8"), headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=300) as r:
+                out = replies(r.read(), r.headers.get("Content-Type", ""))
+        except urllib.error.HTTPError as e:
+            out = replies(e.read(), e.headers.get("Content-Type", ""))
+            if not out:
+                msg = json.loads(line)
+                if isinstance(msg, dict) and "id" in msg:
+                    out = [json.dumps({"jsonrpc": "2.0", "id": msg["id"], "error": {
+                        "code": -32603, "message": f"HTTP {e.code} from the server"}})]
+        for reply in out:
+            sys.stdout.write(reply + "\n")
+        sys.stdout.flush()
+
+
 def main() -> int:
-    bridge = shutil.which("mcp-remote")
-    if not bridge:
-        sys.exit("mcp-remote is not installed: npm install -g mcp-remote")
     # A stop signal unwinds through the cleanup below instead of skipping it.
     for sig in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, lambda *_: sys.exit(0))
@@ -76,11 +109,8 @@ def main() -> int:
         env=env, stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=sys.stderr)
     try:
         wait_healthy(f"{base}/healthz", server)
-        key = mint_key(db_path)
-        return subprocess.call(
-            [bridge, f"{base}/mcp", "--transport", "http-only", "--allow-http",
-             "--header", f"Authorization: Bearer {key}"],
-            env=env)
+        relay(f"{base}/mcp", mint_key(db_path))
+        return 0
     finally:
         server.terminate()
         try:
