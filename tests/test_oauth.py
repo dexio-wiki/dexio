@@ -45,9 +45,9 @@ def person(app, email):
     return c
 
 
-def register(app, name="Claude"):
+def register(app, name="Claude", redirect=REDIRECT):
     r = app.state.live.post("/register", json={
-        "redirect_uris": [REDIRECT], "client_name": name, "token_endpoint_auth_method": "none",
+        "redirect_uris": [redirect], "client_name": name, "token_endpoint_auth_method": "none",
         "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"]})
     assert r.status_code == 201, r.text
     return r.json()["client_id"]
@@ -60,9 +60,9 @@ def pkce():
     return verifier, challenge
 
 
-def authorize(app, browser, client_id, challenge, state="xyz"):
+def authorize(app, browser, client_id, challenge, state="xyz", redirect=REDIRECT):
     r = browser.get("/authorize", params={
-        "response_type": "code", "client_id": client_id, "redirect_uri": REDIRECT,
+        "response_type": "code", "client_id": client_id, "redirect_uri": redirect,
         "code_challenge": challenge, "code_challenge_method": "S256", "state": state,
         "resource": BASE + "/mcp"})
     assert r.status_code in (302, 303, 307), r.text
@@ -99,15 +99,15 @@ def mcp(app, tok, tool, **args):
     return {"error": text} if res.get("isError") else json.loads(text)
 
 
-def full_flow(app, browser, name="Claude"):
-    client_id = register(app, name)
+def full_flow(app, browser, name="Claude", redirect=REDIRECT):
+    client_id = register(app, name, redirect)
     verifier, challenge = pkce()
-    back = consent(browser, authorize(app, browser, client_id, challenge))
+    back = consent(browser, authorize(app, browser, client_id, challenge, redirect=redirect))
     assert back.status_code == 303
     q = parse_qs(urlsplit(back.headers["location"]).query)
-    assert back.headers["location"].startswith(REDIRECT) and q["state"] == ["xyz"]
+    assert back.headers["location"].startswith(redirect) and q["state"] == ["xyz"]
     assert q["iss"] == [BASE]
-    r = token(app, grant_type="authorization_code", code=q["code"][0], redirect_uri=REDIRECT,
+    r = token(app, grant_type="authorization_code", code=q["code"][0], redirect_uri=redirect,
               client_id=client_id, code_verifier=verifier)
     assert r.status_code == 200, r.text
     return client_id, r.json(), q["code"][0], verifier
@@ -198,6 +198,56 @@ def test_a_live_sign_in_counts_as_the_workspace_having_an_agent(app):
     oauth.disconnect(app.state.conn, db.workspaces_for_user(app.state.conn, uid)[0]["id"],
                      client_id)
     assert not connected()
+
+
+CHATGPT = "https://chatgpt.com/connector_platform_oauth_redirect"
+
+
+def test_claude_and_chatgpt_are_told_apart_by_where_they_send_people_back():
+    for uri in ("https://claude.ai/api/mcp/auth_callback", "https://claude.com/api/mcp/auth_callback"):
+        assert oauth.app_of({"redirect_uris": [uri]}) == "claude", uri
+    assert oauth.app_of({"redirect_uris": [CHATGPT]}) == "chatgpt"
+    for uri in ("https://notclaude.ai/cb", "https://claude.ai.evil.example/cb",
+                "http://localhost:3334/callback", "https://connect.smithery.ai/callback", "nope"):
+        assert oauth.app_of({"redirect_uris": [uri]}) is None, uri
+    assert oauth.app_of({}) is None and oauth.app_of({"redirect_uris": None}) is None
+
+
+def test_the_connect_step_waits_for_that_app_to_sign_in(app):
+    """Forrest, 2026-10-12: a signup copied the first-page message twice while
+    ChatGPT had never reached Allow access, so Claude's and ChatGPT's Connect step
+    holds First page until GET /connect/status says that app has signed in as this
+    person. The sign-in itself counts, not a first call (the 2026-09-27 waiting line
+    waited for one and never resolved)."""
+    ann = person(app, "ann@example.com")
+
+    def status(who, client):
+        r = who.get("/api/v1/connect/status", params={"client": client})
+        assert r.status_code == 200, r.text
+        return r.json()["connected"]
+
+    assert not status(ann, "claude") and not status(ann, "chatgpt")
+    # only the two apps that sign in; an agent with a key has nothing to wait for
+    for client in ("hermes", "claude-code", "nope"):
+        assert ann.get("/api/v1/connect/status", params={"client": client}).status_code == 400
+    stranger = TestClient(app, base_url=BASE, follow_redirects=False)
+    assert stranger.get("/api/v1/connect/status", params={"client": "claude"}).status_code == 401
+    # another app signing in opens neither
+    full_flow(app, ann, name="Smithery", redirect="https://connect.smithery.ai/callback")
+    assert not status(ann, "claude") and not status(ann, "chatgpt")
+    # the code exchange is enough: no MCP call has been made yet
+    claude_id, *_ = full_flow(app, ann)
+    assert status(ann, "claude") and not status(ann, "chatgpt")
+    full_flow(app, ann, name="ChatGPT", redirect=CHATGPT)
+    assert status(ann, "chatgpt")
+    # someone else's sign-in never opens yours
+    bob = person(app, "bob@example.com")
+    assert not status(bob, "claude") and not status(bob, "chatgpt")
+    # disconnected, Claude's step waits again
+    uid = auth.user_by_email(app.state.conn, "ann@example.com")["id"]
+    oauth.disconnect(app.state.conn, db.workspaces_for_user(app.state.conn, uid)[0]["id"],
+                     claude_id)
+    assert not status(ann, "claude") and status(ann, "chatgpt")
 
 
 def test_refresh_rotates_and_old_tokens_stop_working(app):

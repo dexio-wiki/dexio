@@ -19,6 +19,7 @@ import hashlib
 import json
 import secrets
 import time
+from urllib.parse import urlsplit
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -113,6 +114,40 @@ def connections(conn, workspace_id: int) -> list[dict]:
     return [{"client_id": r["client_id"],
              "name": json.loads(r["info"]).get("client_name") or "OAuth app",
              "since": r["since"], "last_used": r["last_used"]} for r in rows]
+
+
+# The two chat apps the connect flow walks people through, told apart by where
+# they send people back after consent (the host of a registered redirect URI), since
+# a client names itself. Claude registers https://claude.ai/api/mcp/auth_callback
+# (every Claude client on production, 2026-10-12); ChatGPT registers
+# https://chatgpt.com/connector_platform_oauth_redirect (stackoverflow.com/q/79830225).
+APP_HOSTS = {"claude": ("claude.ai", "claude.com"), "chatgpt": ("chatgpt.com", "chat.openai.com")}
+
+
+def app_of(info: dict) -> str | None:
+    """Which of APP_HOSTS' apps a registered client is, or None."""
+    for uri in info.get("redirect_uris") or []:
+        host = (urlsplit(str(uri)).hostname or "").lower()
+        for app, hosts in APP_HOSTS.items():
+            if any(host == h or host.endswith("." + h) for h in hosts):
+                return app
+    return None
+
+
+def app_signed_in(conn, user_id: int, app: str) -> bool:
+    """Whether Claude or ChatGPT (app) has a live sign-in as this person, in any
+    workspace: what the connect flow waits for before its First page step."""
+    rows = conn.execute(
+        "SELECT DISTINCT c.info FROM oauth_tokens t JOIN oauth_clients c USING (client_id)"
+        " WHERE t.user_id=? AND t.revoked_at IS NULL AND t.expires_at>?",
+        (user_id, time.time())).fetchall()
+    for r in rows:
+        try:
+            if app_of(json.loads(r["info"])) == app:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 
 def my_connections(conn, user_id: int) -> list[dict]:

@@ -387,7 +387,8 @@ def connect_steps(client: str, base: str, token: str = "", view: str = "agents")
     name, _sub, kind = CLIENTS[client]
     if kind == "token":
         return ais.panes(*_agent_steps(client, CALL.get(client, name), base, token, view))
-    return ais.panes(*_app_steps(client, base))
+    # Claude and ChatGPT: First page waits for the sign-in (ais.panes, STEPS_JS watch)
+    return ais.panes(*_app_steps(client, base), wait=client, name=name)
 
 
 # The first message: the agent saves a real first page, and the graph appearing is
@@ -1198,8 +1199,11 @@ def _connect_panel(ws: dict, connect: str | None, base: str, api: str) -> str:
     a key and the list below picks it up. No "Waiting for your AI to connect" line
     (same day: Forrest connected Claude and it never resolved, and didn't think it
     necessary); the Connected list re-reads itself when the tab comes back into
-    view, so an AI that signed in elsewhere shows there. connect is the ?connect
-    value: an AI's id picks that AI, anything else picks none."""
+    view, so an AI that signed in elsewhere shows there. Since 2026-10-12 Claude's
+    and ChatGPT's Connect step does wait, for the sign-in itself rather than a first
+    call, before First page (ais.panes; Forrest: don't let them on to the first-page
+    message before the app is added). connect is the ?connect value: an AI's id
+    picks that AI, anything else picks none."""
     head = "<h2>Connect an agent</h2>"
     pick = connect if connect in CLIENTS else ""
     tiles = "".join(
@@ -1225,10 +1229,11 @@ def _connect_panel(ws: dict, connect: str | None, base: str, api: str) -> str:
 
 # The connect panel's script. The steps are server-rendered fragments
 # (GET /api/v1/connect), so their copy and "Get the message" buttons are handled
-# here by delegation. Nothing polls: the Connected list is re-read from this page
-# after a key is made and whenever the tab comes back into view (as after
-# allowing access in Claude or ChatGPT in another tab). The address keeps
-# ?connect, so a reload comes back to the same AI.
+# here by delegation. The Connected list is re-read from this page after a key is
+# made, whenever the tab comes back into view (as after allowing access in Claude or
+# ChatGPT in another tab) and when Claude's or ChatGPT's Connect step sees the
+# sign-in (STEPS_JS watch, the only thing that polls). The address keeps ?connect,
+# so a reload comes back to the same AI.
 CONNECT_JS = r"""
 (function () {
   const box = document.getElementById("connect");
@@ -1285,6 +1290,7 @@ CONNECT_JS = r"""
     const html = (await r.json()).html;
     if (client !== c) return;
     steps.innerHTML = html;
+    dexioSteps.watch(flow);                 // Claude and ChatGPT wait for the sign-in
   }
 
   box.addEventListener("click", async e => {
@@ -1338,6 +1344,8 @@ CONNECT_JS = r"""
 
   // Back from Claude or ChatGPT in another tab: show what signed in meanwhile.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshList(); });
+  flow.addEventListener("dexio-connected", refreshList);
+  if (client) dexioSteps.watch(flow);       // ?connect=claude rendered its steps already
 })();
 """
 

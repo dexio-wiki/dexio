@@ -86,9 +86,12 @@ def test_an_empty_wiki_connects_its_ai_on_the_graph_screen(app):
     assert "Waiting for your" not in page and "Waiting for the first" not in page
     assert "watchFor()" in connect
     # Forrest, 2026-09-27: the first page is the proof, so no "connected" state and
-    # no check of the person's keys
+    # no check of the person's keys. 2026-10-12: except that Claude's and ChatGPT's
+    # Connect step waits for their sign-in, in the stepper both screens share
+    # (ais.STEPS_JS watch), not in the graph screen's own script.
+    from dexio import render
     for gone in ("connectedFlow", "aiStatus", "/connect/status", "is connected"):
-        assert gone not in page, gone
+        assert gone not in render.APP_JS, gone
     # the tiles are for a workspace with no agent yet; one that has one skips them
     assert "Your agent is already connected?" not in page and "ob-already" not in page
     ready = page[page.index("function readyFlow"):page.index("async function pickClient")]
@@ -144,8 +147,9 @@ def test_the_first_message_has_the_agent_save_a_real_first_page(app):
     html = c.post("/api/v1/connect", json={"client": "hermes"}).json()["html"]
     assert "Once Hermes says it is connected, have it save your first page. Send:" in html
     assert "What&#x27;s in" not in html
-    # the old connection check is gone
-    assert c.get("/api/v1/connect/status").status_code in (404, 405)
+    # the 2026-09-27 connection check for any agent is gone; since 2026-10-12 there
+    # is one for the two apps that sign in (test_oauth), and none for a key
+    assert c.get("/api/v1/connect/status?client=hermes").status_code == 400
 
 
 def test_steps_on_the_graph_point_to_settings_to_revoke_the_key(app):
@@ -188,9 +192,12 @@ def test_agents_page_connects_an_ai_in_place(app):
             assert gone not in page, (url, gone)
         assert "<h2>Connect an agent</h2>" in box
         assert "<script>" in page and "function pick(c)" in page
-        # Forrest, 2026-09-27: no "Waiting for your AI to connect", and so no polling
-        for gone in ("Waiting for", "cwait", "cdone", "/connect/status", "setInterval"):
+        # Forrest, 2026-09-27: no "Waiting for your AI to connect" over the tiles.
+        # Since 2026-10-12 only Claude's and ChatGPT's Connect step waits, for the
+        # sign-in (ais.STEPS_JS watch), so nothing waits with no AI picked.
+        for gone in ("cwait", "cdone"):
             assert gone not in page, (url, gone)
+        assert "Waiting for" not in box and "data-wait" not in box
         assert 'addEventListener("visibilitychange"' in page     # the list re-reads instead
         # a tile for every AI, nothing picked
         for cid in ("chatgpt", "claude", "claude-code", "hermes", "openclaw", "other"):
@@ -228,8 +235,8 @@ def test_connecting_is_a_stepper_with_a_progress_bar(app):
         html = c.get(f"/api/v1/connect?client={client}").json()["html"]
         connect = html[:html.index('<div class="ai-pane" data-pane="3">')]
         first = html[html.index('<div class="ai-pane" data-pane="3">'):]
-        assert connect.startswith('<div class="ai-pane" data-pane="2">'), client
-        assert 'class="ai-back" data-go="1">Back' in connect and 'data-go="3">Next: first page' in connect
+        assert connect.startswith('<div class="ai-pane" data-pane="2"'), client
+        assert 'class="ai-back" data-go="1">Back' in connect and ">Next: first page" in connect
         assert 'id="try-it"' in first and 'id="try-it"' not in connect, client
         assert 'class="ai-back" data-go="2">Back' in first
     # the message with the key stays on Connect
@@ -245,6 +252,52 @@ def test_connecting_is_a_stepper_with_a_progress_bar(app):
     # one stylesheet for both, the bar in it, no colours of its own
     assert ".ai-bar {" in ais.CSS and ais.CSS in page and ais.CSS in login.SETTINGS_CSS
     assert not re.findall(r"#[0-9a-fA-F]{3,6}\b", ais.CSS)
+
+
+def test_claude_and_chatgpt_hold_first_page_until_they_sign_in(app):
+    """Forrest, 2026-10-12: a signup picked ChatGPT, skipped to First page and
+    copied its message twice; ChatGPT had never reached Allow access. Claude's and
+    ChatGPT's Connect step now starts with Next shut and a line saying what it waits
+    for; ais.STEPS_JS's watch asks /connect/status and opens it. Agents that take a
+    key set themselves up from the message and keep an open Next."""
+    from dexio import ais
+    from dexio.server import pages
+
+    c = browser(app)
+    signup(c, "ann@example.com")
+    for client, name in (("chatgpt", "ChatGPT"), ("claude", "Claude")):
+        html = c.get(f"/api/v1/connect?client={client}").json()["html"]
+        connect = html[:html.index('<div class="ai-pane" data-pane="3">')]
+        assert connect.startswith(f'<div class="ai-pane" data-pane="2" data-wait="{client}" '
+                                  f'data-name="{name}">'), client
+        assert 'data-go="3" disabled>Next: first page' in connect
+        assert f"Waiting for {name} to sign in. Once you click Allow access" in connect
+        assert connect.index('class="ai-wait"') > connect.index("Allow access</b>")
+    for client in ("claude-code", "openclaw", "hermes", "muse", "grok-bot", "other"):
+        html = c.get(f"/api/v1/connect?client={client}").json()["html"]
+        assert "data-wait" not in html and " disabled>Next" not in html, client
+        assert "data-wait" not in c.post("/api/v1/connect", json={"client": client}).json()["html"]
+    # ?connect=chatgpt draws the waiting step on the server, and the panel starts the watch
+    box = panel(c.get("/settings/agents?connect=chatgpt").text)
+    assert 'data-wait="chatgpt"' in box and 'data-go="3" disabled>Next' in box
+    assert "if (client) dexioSteps.watch(flow);" in pages.CONNECT_JS
+    assert 'flow.addEventListener("dexio-connected", refreshList)' in pages.CONNECT_JS
+    assert "steps.innerHTML = html;\n    dexioSteps.watch(flow);" in pages.CONNECT_JS
+    # the graph screen starts it once the picked AI's steps land
+    page = c.get("/").text
+    pick = page[page.index("async function pickClient"):page.index("async function failure")]
+    assert pick.index("panes.innerHTML") < pick.index("window.dexioSteps.watch(steps)")
+    # the stepper: no going to First page while waiting, by Next or by the bar
+    js = ais.STEPS_JS
+    assert "window.dexioSteps = {go, picked, watch}" in js
+    assert 'if (n > 2 && flow.dataset.wait) return;' in js
+    assert "(k > 2 && !!flow.dataset.wait)" in js
+    assert '"/connect/status?client="' in js and "setInterval(check, 4000)" in js
+    assert 'document.addEventListener("visibilitychange", back)' in js
+    # picking another AI stops the old watch
+    picked = js[js.index("function picked"):]
+    assert picked.index("unwatch(flow)") < picked.index("flow.dataset.client = id")
+    assert ".ai-next:disabled" in ais.CSS
 
 
 def test_the_ai_picker_is_one_component_in_both_places(app):

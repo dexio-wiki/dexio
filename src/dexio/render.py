@@ -629,6 +629,7 @@ APP_JS = r"""
     if (!wait.isConnected) return;       // another pick arrived first
     if (!r || !r.ok) return wait.replaceChildren(el("p", "ob-error", await failure(r)));
     panes.innerHTML = (await r.json()).html;
+    window.dexioSteps.watch(steps);      // Claude and ChatGPT wait for the sign-in (ais.py)
   }
 
   async function failure(r, fallback) {

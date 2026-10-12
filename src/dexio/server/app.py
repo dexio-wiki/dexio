@@ -1252,6 +1252,17 @@ def get_app(db_path: str | None = None) -> FastAPI:
         note_setup(user["id"], "agent_picked", f"{client} {view}", setup_workspace(request, user))
         return {"client": client, "html": pages.connect_steps(client, base_url(request), view=view)}
 
+    @app.get(f"{API}/connect/status")
+    def connect_status(request: Request, client: str = Query(...)):
+        """Whether Claude or ChatGPT (client) has signed in as this person yet. The
+        connect flow asks every few seconds while its Connect step shows and keeps
+        First page shut until it has (Forrest, 2026-10-12: a signup copied the
+        first-page message twice and ChatGPT had never reached Allow access)."""
+        user = browser_user(request)
+        if pages.CLIENTS.get(client, ("", "", ""))[2] != "oauth":
+            raise HTTPException(400, "only Claude and ChatGPT sign in")
+        return {"client": client, "connected": oauth.app_signed_in(conn, user["id"], client)}
+
     @app.post(f"{API}/connect")
     async def connect_mint(request: Request):
         """Mint a workspace key for an agent that sets itself up, and return its

@@ -152,12 +152,21 @@ def steps_head(at: int = 1, picked: str = "") -> str:
     return f'<ol class="ai-steps" aria-label="Steps">{"".join(items)}</ol>'
 
 
-def panes(connect: str, check: str) -> str:
-    """An agent's Connect and First page steps, each with Back and, on Connect, Next."""
+def panes(connect: str, check: str, wait: str = "", name: str = "") -> str:
+    """An agent's Connect and First page steps, each with Back and, on Connect, Next.
+    wait is set for Claude and ChatGPT (their id; name is how the page calls them):
+    Next starts shut and STEPS_JS's watch opens it once the app has signed in
+    (Forrest, 2026-10-12: no first-page message before the app is added)."""
     back = '<button type="button" class="ai-back" data-go="{n}">Back</button>'
-    return (f'<div class="ai-pane" data-pane="2">{connect}<div class="ai-nav">'
-            f'{back.format(n=1)}<button type="button" class="ai-next" data-go="3">Next: first page'
-            f'</button></div></div>'
+    held, line, shut = "", "", ""
+    if wait:
+        held = f' data-wait="{html.escape(wait)}" data-name="{html.escape(name)}"'
+        line = (f'<p class="ai-wait" role="status">Waiting for {html.escape(name)} to sign in. '
+                f'Once you click Allow access, this moves on by itself.</p>')
+        shut = " disabled"
+    return (f'<div class="ai-pane" data-pane="2"{held}>{connect}{line}<div class="ai-nav">'
+            f'{back.format(n=1)}<button type="button" class="ai-next" data-go="3"{shut}>'
+            f'Next: first page</button></div></div>'
             f'<div class="ai-pane" data-pane="3">{check}<div class="ai-nav">{back.format(n=2)}'
             f'</div></div>')
 
@@ -205,6 +214,9 @@ CSS += """
     border:1px solid transparent; }
   .ai-next:hover { background:var(--btn-hover); }
   .ai-next:active { background:var(--btn-press); }
+  .ai-next:disabled { opacity:.5; cursor:default; pointer-events:none; }
+  .ai-wait { margin:16px 0 0; color:var(--muted); font-size:13.5px; line-height:1.45; }
+  .ai-wait[data-ok] { color:var(--text); }
   @media (prefers-reduced-motion:reduce) {
     .ai-pane { animation:none !important; } .ai-bar { transition:none; } }
 """.replace("TICK", _TICK_MASK)
@@ -243,20 +255,95 @@ STEPS_JS = r"""
     const c = e.target.closest("[data-copy]");
     if (c && c.closest("#onboard, #connect")) note("copied", c.dataset.copy);
   });
-  function go(flow, n) {
-    if (n > 1 && !flow.dataset.client) return;
-    if (flow.dataset.at !== String(n)) note("step", String(n));
-    flow.dataset.at = String(n);
+  // The progress bar for the step showing: past steps ticked, later ones open
+  // once an agent is picked, except First page while the flow waits (watch).
+  function bar(flow) {
+    const n = Number(flow.dataset.at || 1);
     for (const li of flow.querySelectorAll(".ai-steps > li")) {
       const k = Number(li.dataset.n);
       if (k === n) li.setAttribute("aria-current", "step"); else li.removeAttribute("aria-current");
       li.toggleAttribute("data-done", k < n);
-      li.querySelector(".ai-step").disabled = k > n && !flow.dataset.client;
+      li.querySelector(".ai-step").disabled =
+        k > n && (!flow.dataset.client || (k > 2 && !!flow.dataset.wait));
     }
+  }
+  function go(flow, n) {
+    if (n > 1 && !flow.dataset.client) return;
+    if (n > 2 && flow.dataset.wait) return;
+    if (flow.dataset.at !== String(n)) note("step", String(n));
+    flow.dataset.at = String(n);
+    bar(flow);
     const top = flow.getBoundingClientRect().top;
     if (top < 0) flow.scrollIntoView({block: "start"});
   }
+  // Claude and ChatGPT add Dexio in their own settings, and the First page
+  // message does nothing until they have (Forrest, 2026-10-12: a signup copied it
+  // twice and ChatGPT had never reached Allow access). So their Connect step
+  // (data-wait, from ais.panes) keeps Next shut and asks GET /connect/status every
+  // 4 seconds while the tab shows, and at once when the tab comes back, as it does
+  // after Allow access in another tab. Signed in: Next opens and the flow moves on
+  // to First page. One signed in before the step showed opens Next and stays put.
+  // No time limit, so the line never claims to wait once nothing is asking.
+  const watching = new Map();
+  function unwatch(flow) {
+    const stop = watching.get(flow);
+    if (stop) { stop(); watching.delete(flow); }
+  }
+  function watch(flow) {
+    unwatch(flow);
+    const pane = flow.querySelector(".ai-pane[data-wait]");
+    if (!pane) { delete flow.dataset.wait; bar(flow); return; }
+    const client = pane.dataset.wait, name = pane.dataset.name || client;
+    const next = pane.querySelector(".ai-next"), line = pane.querySelector(".ai-wait");
+    const holder = flow.closest("[data-api]");
+    const api = window.DEXIO_API || (holder && holder.dataset.api) || "/api/v1";
+    flow.dataset.wait = client;
+    bar(flow);
+    let first = true, busy = false, away = false;
+    async function check() {
+      if (!pane.isConnected || !flow.isConnected) return unwatch(flow);
+      if (busy || document.hidden) return;
+      busy = true;
+      let ok = false, answered = false;
+      try {
+        const r = await fetch(api + "/connect/status?client=" + encodeURIComponent(client));
+        if (r.ok) { ok = !!(await r.json()).connected; answered = true; }
+      } catch (err) {}
+      busy = false;
+      const already = first && answered;
+      if (answered) first = false;
+      if (!pane.isConnected || flow.dataset.wait !== client) return;
+      if (!ok) {
+        if (away && line) line.textContent = "Still waiting for " + name + ". If you clicked " +
+          "Allow access, check that the page was signed in to this Dexio account.";
+        return;
+      }
+      unwatch(flow);
+      delete flow.dataset.wait;
+      if (next) next.disabled = false;
+      if (line) {
+        line.textContent = name + (already ? " is already connected." : " is connected.");
+        line.setAttribute("data-ok", "");
+      }
+      bar(flow);
+      if (!already && flow.dataset.at === "2") go(flow, 3);
+      flow.dispatchEvent(new CustomEvent("dexio-connected", {bubbles: true}));
+    }
+    const timer = setInterval(check, 4000);
+    const back = () => {
+      if (document.hidden) { away = true; return; }
+      check();
+    };
+    document.addEventListener("visibilitychange", back);
+    watching.set(flow, () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", back);
+    });
+    check();
+  }
   function picked(flow, id, name) {
+    unwatch(flow);
+    delete flow.dataset.wait;
     flow.dataset.client = id;
     const lab = flow.querySelector('.ai-steps li[data-n="1"] .ai-txt');
     if (lab) lab.textContent = name;
@@ -267,7 +354,7 @@ STEPS_JS = r"""
     if (!flow || b.disabled) return;
     go(flow, Number(b.dataset.go));
   });
-  window.dexioSteps = {go, picked};
+  window.dexioSteps = {go, picked, watch};
   window.dexioSetup = note;
 })();
 """
