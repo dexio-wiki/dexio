@@ -131,10 +131,12 @@ def test_an_empty_wiki_skips_connecting_when_the_workspace_has_an_agent(app):
 def test_the_first_message_has_the_agent_save_a_real_first_page(app):
     """Forrest, 2026-09-27: have them push up a first page as part of the
     onboarding. Not a test note: the agent writes about the work, and asks
-    first when it has nothing to go on. The graph appearing is the proof."""
+    first when it has nothing to go on. The graph appearing is the proof.
+    Since 2026-10-13, what it knows about the project as a few linked pages."""
     from dexio.server import pages
 
-    assert pages.TRY_IT == ("Save a page in my Dexio wiki about what we're working on. "
+    assert pages.TRY_IT == ("Put what you know about the project we're working on into my "
+                            "Dexio wiki, as a few pages linked together. "
                             "If you don't know enough yet, ask me first.")
     c = browser(app)
     signup(c, "ann@example.com")
@@ -143,7 +145,8 @@ def test_the_first_message_has_the_agent_save_a_real_first_page(app):
     assert first == pages.TRY_IT
     for client in ("claude", "chatgpt"):
         html = c.get(f"/api/v1/connect?client={client}").json()["html"]
-        assert "send this to save your first page:" in html and "Save a page in my Dexio wiki" in html
+        assert ("send this to save your first page:" in html
+                and "Put what you know about the project" in html)
     html = c.post("/api/v1/connect", json={"client": "hermes"}).json()["html"]
     assert "Once Hermes says it is connected, have it save your first page. Send:" in html
     assert "What&#x27;s in" not in html
@@ -396,10 +399,10 @@ def test_the_message_carries_a_working_key_and_names_no_wiki(app):
                   r"(dxk_[A-Za-z0-9_\-]+)</code>", html)
     assert m, html
     assert html.count("wiki called") == 0
-    assert "Save a page in my Dexio wiki about what we&#x27;re working on." in html
+    assert "Put what you know about the project we&#x27;re working on into my Dexio wiki" in html
     assert mcp(app, m.group(1), "list_pages")["pages"] == []         # the key works
     # chat apps get the same first message
-    assert "Save a page in my Dexio wiki" in c.get("/api/v1/connect?client=claude").json()["html"]
+    assert "Put what you know about the project" in c.get("/api/v1/connect?client=claude").json()["html"]
 
 
 def wikis(app) -> set[str]:

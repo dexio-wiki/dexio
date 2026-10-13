@@ -396,7 +396,12 @@ def connect_steps(client: str, base: str, token: str = "", view: str = "agents")
 # as part of the onboarding"). Not a test note, which would sit in the wiki for good
 # (the same morning's "Hello" page). An agent in a project writes about it; a chat app
 # with nothing to go on asks first. One message for every agent.
-TRY_IT = ("Save a page in my Dexio wiki about what we're working on. "
+# Since 2026-10-13 (Forrest: "Is it weird that we have them push up a page that doesn't
+# fit the wiki?", then "Go") it asks for what the agent knows about the project as a few
+# linked pages. The old "a page about what we're working on" got a status note that
+# goes stale within days and one unlinked page, a single dot in the graph.
+TRY_IT = ("Put what you know about the project we're working on into my Dexio wiki, "
+          "as a few pages linked together. "
           "If you don't know enough yet, ask me first.")
 
 

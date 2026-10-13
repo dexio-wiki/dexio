@@ -150,7 +150,7 @@ def test_claude_gets_a_one_click_install_link_and_everyone_a_first_message(app):
     for client in ("claude", "chatgpt"):
         # a real first page, not a "Hello" test note (Forrest, 2026-09-27)
         page = steps(c, client)
-        assert "Save a page in my Dexio wiki about what we&#x27;re working on." in page
+        assert "Put what you know about the project we&#x27;re working on into my Dexio wiki" in page
         assert "Hello" not in page
 
 
