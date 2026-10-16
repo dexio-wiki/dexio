@@ -93,9 +93,9 @@ console.log("graph layout");
 
 // Before the fix each node moved about 30 layout px per frame over the first
 // second on a wiki like this, and 2,000 px on screen before it came to rest.
-// A browser that never picked a layout opens By folder (Forrest, 2026-09-27).
-check("a first visit opens By folder", () => {
-  assert.equal(state.layout, "folders");
+// A browser that never picked a layout opens Force (Forrest, 2026-10-15).
+check("a first visit opens Force", () => {
+  assert.equal(state.layout, "force");
 });
 
 check("a dense wiki opens laid out: the first second on screen barely moves", () => {
@@ -139,8 +139,8 @@ function hops(from) {
   return d;
 }
 
-check("the menu offers exactly the four layouts, By folder first, the current one ticked", () => {
-  assert.deepEqual(menu, ["folders", "force", "radial", "circle"]);
+check("the menu offers exactly the four layouts, Force first, the current one ticked", () => {
+  assert.deepEqual(menu, ["force", "folders", "radial", "circle"]);
   setLayout("radial");
   const html = layoutMenuHtml();
   assert.match(html, /data-layout="radial" aria-checked="true"/);
@@ -272,7 +272,7 @@ check("the choice is remembered per browser, and restored on the next visit", ()
   assert.equal(globalThis.window.dexio.state.layout, "radial");
   stored.set("dexio-layout", "nonsense");
   new Function(wrapped)();
-  assert.equal(globalThis.window.dexio.state.layout, "folders");
+  assert.equal(globalThis.window.dexio.state.layout, "force");
 });
 
 // Force is Obsidian's layout: d3-force, set up the way Obsidian sets it up.

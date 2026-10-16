@@ -47,7 +47,7 @@
     userView: false,
     // Which layout places the pages (see "layouts" below), the switch in
     // progress, and the page Radial is centred on.
-    layout: "folders", glide: null, radialCentre: null,
+    layout: "force", glide: null, radialCentre: null,
     adj: new Map(), anchors: new Map(),
     // The folder the graph is narrowed to (see "one folder" below), and the
     // pages outside it that its pages link to or from, drawn faded.
@@ -613,12 +613,12 @@
 
   // ---- layouts ------------------------------------------------------------
   // Four ways to place the pages, picked from the menu over the graph's
-  // top-left corner and remembered per browser (Forrest, 2026-09-26). By
-  // folder is what a browser that never picked one sees (Forrest, 2026-09-27;
-  // Force was until then).
-  //   folders  the same forces, each folder held to its own part of the graph;
-  //            the default, and first in the menu (Forrest, 2026-09-27)
-  //   force    links pull, pages push apart
+  // top-left corner and remembered per browser (Forrest, 2026-09-26). Force
+  // is what a browser that never picked one sees, the home page's demo
+  // included (Forrest, 2026-10-15; By folder was from 2026-09-27).
+  //   force    links pull, pages push apart; the default, and first in the
+  //            menu (Forrest, 2026-10-15)
+  //   folders  the same forces, each folder held to its own part of the graph
   //   radial   one page in the middle, the rest in rings by links away
   //   circle   every page round one circle, folder by folder
   // Force and By folder are simulations: they settle before they are shown,
@@ -627,8 +627,8 @@
   // Switching glides each page from where it was to where it goes, so the eye
   // can follow one across rather than watching the graph re-form.
   const LAYOUT_KEY = "dexio-layout";
-  const LAYOUTS = ["folders", "force", "radial", "circle"];
-  const DEFAULT_LAYOUT = "folders";
+  const LAYOUTS = ["force", "folders", "radial", "circle"];
+  const DEFAULT_LAYOUT = "force";
   const GLIDE_MS = 520;
   const FOLDER_PULL = 0.06, FOLDER_CROSS = 0.05, FOLDER_SPACE = 70;
   const RING_GAP = 140, RING_PAD = 18, CIRCLE_PAD = 12, FOLDER_GAP = 26;
