@@ -358,23 +358,34 @@ def _app_steps(client: str, base: str) -> tuple[str, str]:
                 f"""<p>In a new chat, click <b>+</b>, then <b>Connectors</b>, and turn on Dexio.
       Then send this to save your first page:</p>
     {_copy_block("try-it", TRY_IT, "Copy")}""")
-    # developers.openai.com/api/docs/guides/developer-mode and
-    # developers.openai.com/plugins/deploy/connect-chatgpt (checked 2026-09-25).
-    return (f"""<p class="muted">ChatGPT connects to Dexio only in Developer mode, on
-      chatgpt.com in a browser, with a paid plan (Plus, Pro, Business, Enterprise or
-      Education).</p>
+    # Read 2026-10-17: developers.openai.com/api/docs/guides/custom-mcp-server (it
+    # replaced the Developer mode guide), /plugins/deploy/connect-chatgpt and
+    # help.openai.com/en/articles/12584461. Plugins adds a custom MCP server with no
+    # Developer mode; web only; on Business only admins and owners can add one. OpenAI
+    # names no plans for personal accounts (Developer mode was Plus and up, 2026-10-04),
+    # so the steps name none; Developer mode stays as the fallback for accounts without
+    # the option.
+    plugins = '<a href="https://chatgpt.com/plugins" target="_blank" rel="noopener">Plugins</a>'
+    return (f"""<p class="muted">This works in ChatGPT in a browser, not in the phone app. On a
+      Business, Enterprise or Edu workspace, an admin or owner may have to add it for you.</p>
     <ol class="steps">
       <li>Copy this address:
         {_copy_block("mcp-url", url, "Copy address")}</li>
-      <li>In <a href="https://chatgpt.com" target="_blank" rel="noopener">ChatGPT</a>, open
-        <b>Settings</b>, then <b>Security and login</b>, and turn on <b>Developer mode</b>.</li>
-      <li>Open <a href="https://chatgpt.com/plugins" target="_blank"
-        rel="noopener">chatgpt.com/plugins</a>, click <b>+</b>, type <b>Dexio</b> as the name,
-        paste the address, and click <b>Create</b>.</li>
-      <li>ChatGPT brings you here; click <b>Allow access</b>.</li>
-    </ol>""",
-            f"""<p>In a new chat, open the <b>+</b> menu, choose <b>Developer mode</b>, then
-      Dexio, and send this to save your first page:</p>
+      <li>In ChatGPT, open {plugins}, click <b>+</b>, then <b>Add custom MCP server</b>.</li>
+      <li>Name it Dexio and paste the address as the server URL. Choose <b>OAuth</b> for
+        authentication, tick <b>I understand and want to continue</b>, then click <b>Create as
+        a plugin</b>.</li>
+      <li>When ChatGPT brings you here, click <b>Allow access</b>.</li>
+    </ol>
+    <details>
+      <summary>No Add custom MCP server option?</summary>
+      <p>Your plan or workspace may not allow it yet. If your ChatGPT settings still have
+        <b>Developer mode</b> (Settings, then Security and login), turn it on and look again.
+        In a workspace, ask an admin.</p>
+    </details>""",
+            f"""<p>If Dexio is not installed yet, install it from {plugins}, under
+      <b>Personal</b>. In a new chat, type <b>@</b>, pick Dexio and
+      send this to save your first page:</p>
     {_copy_block("try-it", TRY_IT, "Copy")}""")
 
 

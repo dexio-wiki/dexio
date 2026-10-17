@@ -48,7 +48,8 @@ neither do you. Dexio gives them one wiki instead.
 
 Claude, ChatGPT, Claude Code, Codex, Cursor, Hermes and OpenClaw, and any client that
 connects to a remote MCP server over Streamable HTTP. Claude and ChatGPT connect with
-OAuth (ChatGPT needs a paid plan and its Developer mode); other agents use an API key.
+OAuth (in ChatGPT on the web, add it as a custom MCP server under Plugins); other agents
+use an API key.
 
 ## Get started
 

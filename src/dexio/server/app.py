@@ -2324,6 +2324,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
                              ClientRegistrationOptions(enabled=True),
                              RevocationOptions(enabled=True))
     as_meta.authorization_response_iss_parameter_supported = True
+    as_meta.scopes_supported = list(oauth.SCOPES)
 
     def _with_iss(location: str) -> str:
         parts = urlsplit(location)

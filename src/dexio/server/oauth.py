@@ -11,7 +11,9 @@ module is the storage and the consent step behind them.
 An access token stands for one person in one workspace, with no wiki
 restriction, exactly like a workspace token made in the connect flow. Tokens are
 stored hashed. Access tokens live an hour; refresh tokens 30 days and rotate
-on every use.
+on every use. Every sign-in gets a refresh token, whatever scope it asks for;
+the one scope advertised, offline_access, is there because ChatGPT looks for it
+(see OFFLINE_ACCESS).
 """
 from __future__ import annotations
 
@@ -38,6 +40,17 @@ ACCESS_TTL = 3600
 REFRESH_TTL = 30 * 86400
 CODE_TTL = 300
 PENDING_TTL = 900
+
+# OpenAI asks authorization servers to list offline_access in scopes_supported;
+# without it "ChatGPT may lose access after the original authorization expires"
+# (help.openai.com/en/articles/12584461, read 2026-10-17). It changes nothing here,
+# since every sign-in already gets a refresh token. The authorization server
+# metadata lists it (app.py); the protected resource metadata does not, so clients
+# that take their scope from there (Claude among them) sign in as before. Any
+# client may ask for it, including one registered before it was advertised
+# (Provider.get_client); any other scope is still refused.
+OFFLINE_ACCESS = "offline_access"
+SCOPES = [OFFLINE_ACCESS]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS oauth_clients (
@@ -239,7 +252,14 @@ class Provider:
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         row = self.conn.execute("SELECT info FROM oauth_clients WHERE client_id=?",
                                 (client_id,)).fetchone()
-        return OAuthClientInformationFull.model_validate_json(row["info"]) if row else None
+        if not row:
+            return None
+        client = OAuthClientInformationFull.model_validate_json(row["info"])
+        # The library checks a requested scope against the client's registered one.
+        scopes = (client.scope or "").split()
+        if OFFLINE_ACCESS not in scopes:
+            client.scope = " ".join(scopes + [OFFLINE_ACCESS])
+        return client
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         with db.LOCK, self.conn:

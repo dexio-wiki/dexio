@@ -60,11 +60,11 @@ def pkce():
     return verifier, challenge
 
 
-def authorize(app, browser, client_id, challenge, state="xyz", redirect=REDIRECT):
+def authorize(app, browser, client_id, challenge, state="xyz", redirect=REDIRECT, scope=None):
     r = browser.get("/authorize", params={
         "response_type": "code", "client_id": client_id, "redirect_uri": redirect,
         "code_challenge": challenge, "code_challenge_method": "S256", "state": state,
-        "resource": BASE + "/mcp"})
+        "resource": BASE + "/mcp", **({"scope": scope} if scope else {})})
     assert r.status_code in (302, 303, 307), r.text
     consent = r.headers["location"]
     assert consent.startswith(BASE + "/oauth/consent?req=")
@@ -248,6 +248,51 @@ def test_the_connect_step_waits_for_that_app_to_sign_in(app):
     oauth.disconnect(app.state.conn, db.workspaces_for_user(app.state.conn, uid)[0]["id"],
                      claude_id)
     assert not status(ann, "claude") and status(ann, "chatgpt")
+
+
+def test_offline_access_is_advertised_and_any_client_may_ask_for_it(app):
+    """OpenAI asks authorization servers to list offline_access in scopes_supported,
+    or ChatGPT "may lose access after the original authorization expires"
+    (help.openai.com/en/articles/12584461, read 2026-10-17). Every sign-in gets a
+    refresh token anyway; advertising the scope lets ChatGPT ask for it. A client
+    registered with no scope, which is every client registered before this, may
+    ask for it too, and a scope Dexio does not have is still refused."""
+    live = app.state.live
+    meta = live.get("/.well-known/oauth-authorization-server").json()
+    assert meta["scopes_supported"] == ["offline_access"]
+    # The resource metadata stays scope-free: MCP clients that take their scope from
+    # it (Claude among them) keep signing in exactly as before.
+    for path in ("/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-protected-resource"):
+        assert "scopes_supported" not in live.get(path).json(), path
+    ann = person(app, "ann@example.com")
+    r = live.post("/register", json={
+        "redirect_uris": [CHATGPT], "client_name": "ChatGPT", "scope": "offline_access",
+        "token_endpoint_auth_method": "none",
+        "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"]})
+    assert r.status_code == 201, r.text
+    for client_id in (r.json()["client_id"], register(app, "ChatGPT", CHATGPT)):
+        verifier, challenge = pkce()
+        back = consent(ann, authorize(app, ann, client_id, challenge, redirect=CHATGPT,
+                                      scope="offline_access"))
+        code = parse_qs(urlsplit(back.headers["location"]).query)["code"][0]
+        r = token(app, grant_type="authorization_code", code=code, redirect_uri=CHATGPT,
+                  client_id=client_id, code_verifier=verifier)
+        assert r.status_code == 200, r.text
+        tok = r.json()
+        assert tok["refresh_token"].startswith("dxr_") and tok["scope"] == "offline_access"
+        assert mcp(app, tok["access_token"], "list_pages")["pages"] == []
+        r = token(app, grant_type="refresh_token", refresh_token=tok["refresh_token"],
+                  client_id=client_id)
+        assert r.status_code == 200, r.text
+        assert r.json()["refresh_token"].startswith("dxr_")
+        assert r.json()["scope"] == "offline_access"
+    _v, challenge = pkce()
+    r = live.get("/authorize", params={
+        "response_type": "code", "client_id": client_id, "redirect_uri": CHATGPT,
+        "code_challenge": challenge, "code_challenge_method": "S256", "state": "s2",
+        "scope": "offline_access admin", "resource": BASE + "/mcp"})
+    assert r.status_code in (302, 303, 307)
+    assert parse_qs(urlsplit(r.headers["location"]).query)["error"] == ["invalid_scope"]
 
 
 def test_refresh_rotates_and_old_tokens_stop_working(app):
