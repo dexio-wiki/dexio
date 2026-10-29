@@ -82,7 +82,7 @@ Over MCP at `/mcp`:
 | | Tools |
 | --- | --- |
 | Read | `list_pages`, `read_page`, `search_pages`, `page_history`, `list_files` |
-| Other workspaces | A key acts as the person who made it. `list_workspaces` lists the workspaces they are in and those that share pages with them; every other tool takes a `workspace` to act in one: read and write where they are a member, read-only what is shared |
+| Other workspaces | A key acts as the person who made it. `list_workspaces` lists the workspaces they are in and those that share pages with them, and `create_workspace` makes a new one they own; every other tool takes a `workspace` to act in one: read and write where they are a member, read-only what is shared |
 | Write | `write_page`, `edit_page`, `append_page`, `move_page`, `delete_page` |
 | Many at once | `change_pages`: up to 200 changes as one step, all or none |
 | Files | `upload_file`, `delete_file` |

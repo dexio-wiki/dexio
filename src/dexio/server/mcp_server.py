@@ -57,6 +57,7 @@ from ..parse import (MDLINK, WIKILINK, Page, _normalise, _resolve, basename, fin
 from ..parse import heading_anchors
 from ..parse import outline as page_outline
 from . import auth, db, files, oauth, shares
+from .ratelimit import Limiter
 
 log = logging.getLogger("dexio.mcp")
 
@@ -170,7 +171,8 @@ keep no history.
 Other workspaces: this key acts as the person who made it (or who signed in). Every tool works
 in this workspace unless you pass workspace: the handle of another one, or a link into it.
 list_workspaces lists them: those the person is a member of (read and write) and those that
-share pages with them (read only what is shared).
+share pages with them (read only what is shared). create_workspace makes a new one, owned by
+the person, when they ask for one.
 
 Who can see it: set_visibility reports or sets who can open a page, a folder or the whole
 wiki: restricted (members), link (anyone with the url) or published (listed on dexio.wiki).
@@ -619,6 +621,9 @@ def build_mcp(conn) -> MCPServer:
                 "restore": f"read_page with revision={rev}, then write_page with that text"}
 
     public = os.environ.get("DEXIO_PUBLIC_URL", "https://app.dexio.wiki").rstrip("/")
+    # New workspaces per person over MCP, the same allowance as the app's New
+    # workspace (app.py form_user): a loop in an agent stops here.
+    workspace_limit = Limiter(20, 600)
 
     def page_url(row, path: str | None = None, anchor: str = "", handle: str = "") -> str:
         """Where a person opens the page in the web app (app.py wiki_address), for
@@ -916,6 +921,41 @@ def build_mcp(conn) -> MCPServer:
             found.append({**entry(w, "read"), "shared": what})
         out["shared"] = found
         return out
+
+    @server.tool(annotations=ann(CHANGE, "Create workspace"))
+    def create_workspace(name: str, ctx: Context) -> dict:
+        """Create a workspace, with its wiki, owned by this key's person, on the Free
+        plan. Only when the person asks for one. If they are already in one with this
+        name, that one is returned. Pass its handle as workspace to work in it."""
+        row = caller(ctx)
+        person = db.person_of(conn, row)
+        if not person:
+            raise ToolError("this key belongs to no person, so it cannot own a workspace;"
+                            " create it in the app at https://app.dexio.wiki")
+        typed = " ".join(str(name or "").split())[:80]
+        if not typed:
+            raise ToolError("a workspace needs a name")
+
+        def entry(w: dict) -> dict:
+            return {"handle": w["handle"], "name": w["name"], "access": "read and write",
+                    "url": f"{public}/w/{w['handle']}"}
+
+        # An agent that retries, or runs twice, gets the one it made, not a second.
+        same = next((w for w in db.workspaces_for_user(conn, person)
+                     if w["name"].casefold() == typed.casefold()), None)
+        if same:
+            return {"created": False, "workspace": entry(same),
+                    "hint": f"you are already in {same['name']!r}; pass workspace="
+                            f"{same['handle']!r} to work in it"}
+        if not workspace_limit.allow(f"ws:{person}"):
+            raise ToolError("too many workspaces created; wait a few minutes")
+        new = db.workspace(conn, db.create_workspace(conn, typed, person, plan="free",
+                                                     named=True))
+        log.info("workspace %s created over MCP by user %s (key %r)", new["handle"], person,
+                 row["name"])
+        return {"created": True, "workspace": entry(new),
+                "hint": f"pass workspace={new['handle']!r} to any tool to work in it; members"
+                        " are invited in the app, under Settings, Members"}
 
     @server.tool(annotations=ann(READ, "Check wiki health"))
     def wiki_health(ctx: Context, long_page_words: int = LONG_PAGE_WORDS,

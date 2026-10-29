@@ -91,9 +91,10 @@ def test_every_tool_takes_a_workspace(app):
         "/mcp", headers={"Authorization": f"Bearer {tok}",
                          "Accept": "application/json, text/event-stream"},
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).json()["result"]["tools"]
+    # The two that are about workspaces themselves act in none.
     for t in tools:
-        assert ("workspace" in t["inputSchema"]["properties"]) == (t["name"] != "list_workspaces"), \
-            t["name"]
+        assert ("workspace" in t["inputSchema"]["properties"]) == (
+            t["name"] not in ("list_workspaces", "create_workspace")), t["name"]
 
 
 def test_a_key_works_in_every_workspace_its_person_is_a_member_of(app, sent):
