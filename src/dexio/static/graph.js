@@ -2803,13 +2803,14 @@
 
   const OPS = { write: "Rewritten", edit: "Edited", append: "Appended", push: "Pushed",
                 move: "Links updated for a move", delete: "Deleted",
+                purge: "Deleted for good",
                 // Mark reviewed was in the app for part of 2026-10-04 and then
                 // taken out; revisions it made keep their name.
                 review: "Marked reviewed" };
 
   // What a revision did, in words.
   function revWhat(r) {
-    if (r.deleted) return r.moved_to ? "Moved to" : "Deleted";
+    if (r.deleted) return r.moved_to ? "Moved to" : r.op === "purge" ? "Deleted for good" : "Deleted";
     if (r.op === "baseline") return "Earliest recorded version";
     if (r.moved_from) return "Moved from";
     if (r.first) return "Created";

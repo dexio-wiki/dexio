@@ -47,7 +47,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp_types import CallToolResult, ImageContent, TextContent, ToolAnnotations
-from pydantic import BaseModel, Field, WithJsonSchema
+from pydantic import BaseModel, Field, WithJsonSchema, model_validator
 
 from .. import VERSION
 from .. import health, okf
@@ -56,7 +56,7 @@ from ..parse import (MDLINK, WIKILINK, Page, _normalise, _resolve, basename, fin
                      keep_lines, line_slice, mask_code, page_links, replace_lines, resolve_keys)
 from ..parse import heading_anchors
 from ..parse import outline as page_outline
-from . import auth, db, files, oauth, shares
+from . import auth, db, files, oauth, purge, shares
 from .ratelimit import Limiter
 
 log = logging.getLogger("dexio.mcp")
@@ -162,7 +162,8 @@ then its path. Give it whenever you point someone at a page.
 Undo things: page_history lists a page's revisions with the agent and person who made them
 and their notes (or, without a path, the wiki's latest changes; agent filters to one agent),
 read_page with revision reads an old one, and write_page with that text restores it. Deleted
-pages keep their history.
+pages keep their history. delete_page with permanent deletes a page and its history for
+good, with no undo; do that only when the person asks for it.
 
 Files: upload_file uploads one (images, PDFs, decks), list_files lists them, read_page and
 search_pages read and search them like pages, and delete_file removes one for good: files
@@ -184,7 +185,7 @@ returns every page as a zip of markdown files at their paths.
 
 Help: the person writes to Dexio from Settings, Help in the app, at
 https://dexio.wiki/contact, or to support@dexio.wiki. That is also how a workspace owner has
-something deleted for good, such as a page's earlier versions, which no tool here can do.
+the earlier versions of a page deleted while keeping the page.
 
 Guide: https://dexio.wiki/agents.md"""
 
@@ -347,6 +348,16 @@ class Change(BaseModel):
     update_links: bool = Field(True, description="move: rewrite links to the old path")
     base_version: str | None = Field(None, description="write, edit, delete: fail if the "
                                      "page changed since this version")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _no_permanent(cls, data):
+        """A permanent delete is delete_page's alone. Unknown fields are dropped, so
+        without this a batch asked to delete for good would keep the history quietly."""
+        if isinstance(data, dict) and data.get("permanent"):
+            raise ValueError("change_pages does not delete permanently; use delete_page with"
+                             " permanent, one page at a time")
+        return data
 
 
 # The schema clients see for change_pages' list, written out in place: some clients
@@ -1230,14 +1241,17 @@ def build_mcp(conn) -> MCPServer:
 
     @server.tool(annotations=ann(REMOVE, "Delete page"))
     def delete_page(path: str, ctx: Context, agent: Agent = "",
-                    base_version: str | None = None, note: Note = None,
-                    workspace: Workspace = "") -> dict:
+                    base_version: str | None = None, permanent: bool = False,
+                    note: Note = None, workspace: Workspace = "") -> dict:
         """Delete a page. Its history is kept, and the result says how to restore it.
-        Returns the pages whose links to it are now broken."""
+        permanent also deletes its history, for good, with no undo: only when the
+        person asks; it works on a page deleted before too. Returns the pages whose
+        links to it are now broken."""
         row = writer(ctx, workspace)
         who = _check_agent(agent)
         k = the_wiki(row)
         p = _norm_path(path)
+        note_s = _check_note(note)
 
         def fn(pages):
             do_delete(pages, p, base_version)
@@ -1245,11 +1259,36 @@ def build_mcp(conn) -> MCPServer:
                 "SELECT DISTINCT src FROM edges WHERE project=? AND dst=? AND src!=?"
                 " ORDER BY src", (k, p, p))]
 
+        if not permanent:
+            with db.LOCK:
+                linked_from, stats = change(row, k, "delete", fn, note_s, who)
+                restore = restore_hint(k, p)
+            return {"ok": True, "deleted": p, **restore, "now_broken_on": linked_from,
+                    "wiki_stats": summary(stats)}
+
+        # Forrest, 2026-10-31: "we need to allow permanent page deletion through
+        # dexio mcp". The page is deleted as usual (so links and totals move the
+        # same way), then its history goes (purge.py).
+        out: dict = {"ok": True, "deleted": p, "permanent": True, "now_broken_on": []}
         with db.LOCK:
-            linked_from, stats = change(row, k, "delete", fn, _check_note(note), who)
-            restore = restore_hint(k, p)
-        return {"ok": True, "deleted": p, **restore, "now_broken_on": linked_from,
-                "wiki_stats": summary(stats)}
+            if db.note(conn, k, p) is not None:
+                out["now_broken_on"], stats = change(row, k, "delete", fn, note_s, who)
+                out["wiki_stats"] = summary(stats)
+            else:
+                if file_at(k, p):
+                    raise ToolError(f"{p!r} is an uploaded file; delete_file removes it"
+                                    " (permanently)")
+                had = purge.only_purged(conn, k, p)
+                if had is None:
+                    require_page(db.PageSet(conn, k), p)
+                if had:
+                    raise ToolError(f"{p!r} is already deleted for good")
+            gone = purge.purge_page(conn, k, p, author=row["name"], note=note_s, agent=who,
+                                    user_id=db.person_of(conn, row))
+        out["revisions_deleted"] = gone["revisions_deleted"]
+        if len(gone["history_paths"]) > 1:
+            out["moved_from"] = gone["history_paths"][1:]
+        return out
 
     @server.tool(annotations=ann(CHANGE, "Move page"))
     def move_page(path: str, new_path: str, ctx: Context, agent: Agent = "",
