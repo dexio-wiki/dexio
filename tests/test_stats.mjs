@@ -43,9 +43,10 @@ globalThis.localStorage = {
 const wrapped = src.replace(
   "window.dexio = { load, resize, select };",
   "window.dexio = { load, resize, select, state, setFocus, statsModel, lightWriter, lightChanged, " +
-  "setLit, matches, statsAgo };");
+  "setLit, matches, statsAgo, statsScope };");
 new Function(wrapped)();
-const { load, state, setFocus, statsModel, lightWriter, lightChanged, setLit, matches, statsAgo } =
+const { load, state, setFocus, statsModel, lightWriter, lightChanged, setLit, matches, statsAgo,
+        statsScope } =
   globalThis.window.dexio;
 
 const NOW = 2_000_000_000;
@@ -144,6 +145,14 @@ ok("Show lights every page changed; drilling in or another wiki clears it", () =
   assert.ok(state.lit);
   load(wiki(activity()));
   assert.equal(state.lit, null);
+});
+
+ok("the totals say what they count, so they do not read as this week's", () => {
+  load(wiki(activity()));
+  assert.equal(statsScope(), "In this wiki");
+  setFocus("notes/deep");
+  assert.equal(statsScope(), "In notes/deep");
+  setFocus(null);
 });
 
 ok("nothing to light is no light", () => {

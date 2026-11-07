@@ -4145,6 +4145,11 @@
   }
   function folderOfPath(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
 
+  // What the card's totals count, named over them: under a button that says
+  // "This week" they read as this week's otherwise (Forrest, 2026-11-07: "it
+  // makes me think that 409 pages, 2170 links, 951K words was all this week").
+  function statsScope() { return state.focus == null ? "In this wiki" : `In ${state.focus}`; }
+
   // Seconds since `at` on the server's clock, as of now in this browser.
   function ageOf(at) {
     const act = state.all.activity;
@@ -4267,6 +4272,7 @@
         `${escapeHtml(latestPage.title || latest.path)}</button>`
       : escapeHtml(latest.path);
     stats.card.innerHTML =
+      `<div class="st-head st-first">${escapeHtml(statsScope())}</div>` +
       `<div class="st-nums"><div><b>${short(m.pages)}</b><span>${m.pages === 1 ? "page" : "pages"}</span></div>` +
       `<div><b>${short(m.links)}</b><span>${m.links === 1 ? "link" : "links"}</span></div>` +
       `<div><b>${short(m.words)}</b><span>${m.words === 1 ? "word" : "words"}</span></div></div>` +
