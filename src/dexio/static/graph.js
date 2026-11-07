@@ -4153,7 +4153,7 @@
     for (const c of [...d.dirs.values()].sort((a, b) => byName(a.name, b.name))) {
       const count = countIn(c);
       if (!count) continue;
-      const open = !!state.query || state.expanded.has(c.path);
+      const open = dirOpen(c.path);
       // A click on the row opens and closes it; the arrow at its right drills
       // into it ("one folder"). The arrow is a sibling, since a button cannot
       // hold another; it is out of the tab order because Enter on the row
@@ -4200,6 +4200,32 @@
       `<p class="empty">${state.query ? "No pages match." : "No pages yet."}</p>`);
   }
 
+  // A search opens every folder that holds a match, and a click still closes
+  // one (Forrest, 2026-11-07: "when something is searched in dexio, the
+  // folders cannot be collapsed anymore"). The folders closed during a search
+  // are kept apart from state.expanded and forgotten when the search changes,
+  // so new matches show and clearing it brings back the tree as it was.
+  function shutInSearch() {
+    if (state.shutFor !== state.query) { state.shut = new Set(); state.shutFor = state.query; }
+    return state.shut;
+  }
+
+  function dirOpen(p) {
+    return state.query ? !shutInSearch().has(p) : state.expanded.has(p);
+  }
+
+  // Open (want true), close (false) or flip (undefined) a folder row. True
+  // when that changed something.
+  function toggleDir(p, want) {
+    const open = dirOpen(p);
+    if (want === open) return false;
+    if (state.query) {
+      if (open) shutInSearch().add(p); else shutInSearch().delete(p);
+    } else if (open) state.expanded.delete(p); else state.expanded.add(p);
+    renderTree();
+    return true;
+  }
+
   // Open the folders above a page and bring its row into view.
   function showInTree(n) {
     if (!treeEl || !state.tree) return;
@@ -4208,6 +4234,7 @@
       for (const part of n.folder.split("/")) {
         p = p ? p + "/" + part : part;
         state.expanded.add(p);
+        if (state.query) shutInSearch().delete(p);
       }
     }
     renderTree();
@@ -4269,11 +4296,8 @@
     // arrow at the row's right drills into it (shown on hover or keyboard
     // focus, always on a touch screen). From the keyboard: Enter drills in,
     // Space or the arrow keys open and close.
-    const toggleDir = (p, want) => {
-      const open = state.expanded.has(p);
-      if (want === open) return;
-      if (open) state.expanded.delete(p); else state.expanded.add(p);
-      renderTree();
+    const flipDir = (p, want) => {
+      if (!toggleDir(p, want)) return;
       const again = treeEl.querySelector(`[data-dir="${CSS.escape(p)}"]`);
       if (again) again.focus();
     };
@@ -4283,7 +4307,7 @@
       const drill = e.target.closest("[data-drill]");
       if (drill) { setFocus(drill.dataset.drill); return; }
       const dir = e.target.closest("[data-dir]");
-      if (dir) { toggleDir(dir.dataset.dir); return; }
+      if (dir) { flipDir(dir.dataset.dir); return; }
       const page = e.target.closest("[data-id]");
       if (!page || newTab(e)) return;
       e.preventDefault();
@@ -4297,8 +4321,8 @@
       if (!dir || e.altKey || e.metaKey || e.ctrlKey) return;
       const p = dir.dataset.dir;
       if (e.key === "Enter") { e.preventDefault(); setFocus(p); }
-      else if (e.key === "ArrowRight") { e.preventDefault(); toggleDir(p, true); }
-      else if (e.key === "ArrowLeft") { e.preventDefault(); toggleDir(p, false); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); flipDir(p, true); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); flipDir(p, false); }
     });
     // Hover a folder to pick out its pages; hover a page to name it in the
     // graph. Mouse only: a tap on a phone would leave the graph dimmed.

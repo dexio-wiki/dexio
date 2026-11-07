@@ -54,8 +54,8 @@ def test_a_click_opens_a_folder_and_the_arrow_drills_in():
     assert 'class="drill" data-drill="${path}" tabindex="-1" ' in tree
     # a click anywhere on the row opens or closes it; the arrow drills in
     assert 'if (drill) { setFocus(drill.dataset.drill); return; }' in JS
-    assert 'if (dir) { toggleDir(dir.dataset.dir); return; }' in JS
-    assert JS.index("[data-drill]\");\n      if (drill)") < JS.index("if (dir) { toggleDir(")
+    assert 'if (dir) { flipDir(dir.dataset.dir); return; }' in JS
+    assert JS.index("[data-drill]\");\n      if (drill)") < JS.index("if (dir) { flipDir(")
     # no double-click drilling and no picked-out rows any more
     assert 'treeEl.addEventListener("dblclick"' not in JS and '"picked"' not in JS
     assert "lastPointer" not in JS

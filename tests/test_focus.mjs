@@ -41,7 +41,7 @@ globalThis.localStorage = {
 const wrapped = src.replace(
   "window.dexio = { load, resize, select };",
   "window.dexio = { load, resize, select, state, refilter, setFocus, rankedMatches, treeList, linksOut, " +
-  "openFound, matchedFolders, nodeColor, folderColor };");
+  "openFound, matchedFolders, nodeColor, folderColor, toggleDir, renderTree };");
 new Function(wrapped)();
 const { load, state, refilter, setFocus, treeList, linksOut, nodeColor, folderColor } = globalThis.window.dexio;
 
@@ -234,4 +234,29 @@ ok("so does a search", () => {
   state.query = "";
   refilter();
   assert.equal(state.viewDeg, null);
+});
+
+ok("a search opens the folders, and a click still closes one", () => {
+  // Forrest, 2026-11-07: "when something is searched in dexio, the folders
+  // cannot be collapsed anymore"
+  const { toggleDir, renderTree } = window.dexio;
+  const opened = (p) => treeList.innerHTML.includes(`data-dir="${p}" aria-expanded="true"`);
+  load(wiki());
+  toggleDir("ops");                                    // closed before searching
+  assert.ok(!opened("ops"));
+  state.query = "about";
+  refilter(); renderTree();
+  assert.ok(opened("ops") && opened("notes"), "every folder with a match opens");
+  assert.equal(toggleDir("notes"), true);
+  assert.ok(!opened("notes") && !treeList.innerHTML.includes('data-id="notes/plan"'));
+  assert.equal(toggleDir("notes", false), false, "closing a closed folder changes nothing");
+  assert.equal(toggleDir("notes", true), true);
+  assert.ok(opened("notes") && treeList.innerHTML.includes('data-id="notes/plan"'));
+  toggleDir("notes");
+  state.query = "abou";                                // a new search opens it again
+  renderTree();
+  assert.ok(opened("notes"));
+  state.query = "";                                    // and the tree is back as it was
+  refilter(); renderTree();
+  assert.ok(!opened("ops") && opened("notes"));
 });
