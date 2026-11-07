@@ -440,7 +440,11 @@ def get_app(db_path: str | None = None) -> FastAPI:
         if not data["nodes"] and not data["files"]:
             raise HTTPException(404, "no pages yet")
         data["project"] = db.WIKI
-        if not acc.member:
+        if acc.member:
+            # who changed what lately, for the stats card over the graph; the
+            # workspace's own, so never sent to someone viewing what it shares
+            data["activity"] = db.activity(conn, k)
+        else:
             response.headers["X-Robots-Tag"] = "noindex, nofollow"
         return data
 

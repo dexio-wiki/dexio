@@ -1430,6 +1430,60 @@ def graph(conn, project: str) -> dict:
     }
 
 
+ACTIVITY_DAYS = 7          # "this week" in the graph's stats card
+QUIET_DAYS = 30            # an agent silent this long drops off the card
+
+
+def activity(conn, project: str, now: float | None = None) -> dict:
+    """Who changed the wiki lately, for the stats card over the graph (graph.js,
+    "stats"; Forrest 2026-11-07). `changes`: per writer and page, the changes in
+    the last ACTIVITY_DAYS and the latest; `writers`: everyone who wrote in the
+    last QUIET_DAYS, with their latest, so an agent that went quiet still shows;
+    `latest`: the newest change of all, however old. A writer is the agent the
+    change names, else the person behind it, else "someone". Agent names are
+    matched without regard to case, as page_history's filter does. Baseline rows
+    are left out: they record text from before tracking, not a change."""
+    now = time.time() if now is None else now
+    week, month = now - ACTIVITY_DAYS * 86400, now - QUIET_DAYS * 86400
+    rows = conn.execute(
+        "SELECT lower(COALESCE(agent, '')) AS a, MAX(agent) AS shown, user_id, path,"
+        " SUM(CASE WHEN at >= ? THEN 1 ELSE 0 END) AS n, MAX(at) AS last FROM revisions"
+        " WHERE project=? AND at >= ? AND op <> 'baseline'"
+        " GROUP BY lower(COALESCE(agent, '')), user_id, path",
+        (week, project, month)).fetchall()
+    newest = conn.execute(
+        "SELECT agent, user_id, path, at FROM revisions WHERE project=? AND op <> 'baseline'"
+        " ORDER BY id DESC LIMIT 1", (project,)).fetchone()
+    names = people(conn, [r["user_id"] for r in rows] + ([newest["user_id"]] if newest else []))
+
+    def who(agent, user_id) -> str:
+        return (agent or "").strip() or names.get(user_id or 0, "") or "someone"
+
+    changes: dict[tuple[str, str], dict] = {}
+    writers: dict[str, dict] = {}
+    for r in rows:
+        name = who(r["shown"], r["user_id"])
+        ident = r["a"] or f"\0{name}"
+        w = writers.setdefault(ident, {"who": name, "agent": bool(r["a"]), "last": 0.0})
+        if r["last"] > w["last"]:
+            w["last"] = float(r["last"])
+        if int(r["n"] or 0):
+            c = changes.setdefault((ident, r["path"]), {"who": name, "agent": bool(r["a"]),
+                                                        "path": r["path"], "n": 0, "last": 0.0})
+            c["n"] += int(r["n"])
+            c["last"] = max(c["last"], float(r["last"]))
+    # every row of one writer carries the same spelling of the name
+    for (ident, _), c in changes.items():
+        c["who"] = writers[ident]["who"]
+    return {
+        "now": now, "days": ACTIVITY_DAYS, "quiet_days": QUIET_DAYS,
+        "changes": sorted(changes.values(), key=lambda c: (-c["last"], c["path"])),
+        "writers": sorted(writers.values(), key=lambda w: -w["last"]),
+        "latest": ({"who": who(newest["agent"], newest["user_id"]), "path": newest["path"],
+                    "at": float(newest["at"])} if newest else None),
+    }
+
+
 def note(conn, project: str, path: str):
     row = conn.execute("SELECT path, title, folder, words, text, updated_at FROM pages"
                        " WHERE project=? AND path=?", (project, path)).fetchone()

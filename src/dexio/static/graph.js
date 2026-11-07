@@ -52,6 +52,8 @@
     // The folder the graph is narrowed to (see "one folder" below), and the
     // pages outside it that its pages link to or from, drawn faded.
     focus: null, fringe: new Set(), linked: true,
+    // The pages the stats card lit (see "stats" below): {ids, key, label}.
+    lit: null,
   };
 
   const canvas = document.getElementById("graph");
@@ -1168,10 +1170,11 @@
 
   // Dimmed in the graph while a folder in the tree is hovered: the pages
   // outside it; and, with the graph narrowed to one folder, the linked pages
-  // outside it. Pages the search leaves out are not dimmed but hidden
-  // (filterShown).
+  // outside it; and, while the stats card lights a writer's pages, the rest.
+  // Pages the search leaves out are not dimmed but hidden (filterShown).
   function matches(n) {
     if (state.fringe.has(n.id) && n.id !== state.selected) return false;
+    if (state.lit && !state.lit.ids.has(n.id)) return false;
     return state.hoverFolder == null || inFolder(n, state.hoverFolder);
   }
 
@@ -1246,7 +1249,9 @@
       const lit = state.selected && (l.source === state.selected || l.target === state.selected);
       ctx.strokeStyle = lit ? THEME.edgeLit : THEME.edge;
       ctx.lineWidth = lit ? 1.8 : 1;
-      ctx.globalAlpha = !lit && (state.fringe.has(l.source) || state.fringe.has(l.target)) ? 0.5 : 1;
+      const off = state.lit && !state.lit.ids.has(l.source) && !state.lit.ids.has(l.target);
+      ctx.globalAlpha = off ? 0.35 :
+        !lit && (state.fringe.has(l.source) || state.fringe.has(l.target)) ? 0.5 : 1;
       ctx.beginPath(); ctx.moveTo(sa.x, sa.y); ctx.lineTo(sb.x, sb.y); ctx.stroke();
     }
     ctx.globalAlpha = 1;
@@ -1343,14 +1348,16 @@
   // Labels are placed greedily in priority order and skipped where they would
   // overlap one already drawn. Without this a dense wiki renders as a smear of
   // overprinted titles. Selected page first, then its neighbours, the hovered
-  // page, then everything else by degree, so hubs keep their names.
+  // page, the pages the stats card lit, then everything else by degree, so
+  // hubs keep their names.
   function drawLabels(neighbours, reserved) {
     const nodes = state.data.nodes;
+    const lit = (n) => !!(state.lit && state.lit.ids.has(n.id));
     const prio = (n) => (n.id === state.selected ? 3e6 : 0) + (neighbours.has(n.id) ? 2e6 : 0)
-                      + (n.id === state.hover ? 1e6 : 0) + deg(n);
+                      + (n.id === state.hover ? 1e6 : 0) + (lit(n) ? 5e5 : 0) + deg(n);
     const order = nodes.filter((n) => state.view.k > 0.55 || deg(n) > 3 ||
                                       n.id === state.selected || n.id === state.hover ||
-                                      neighbours.has(n.id))
+                                      neighbours.has(n.id) || lit(n))
                        .sort((a, b) => prio(b) - prio(a));
     ctx.font = LABEL_FONT;
     ctx.textAlign = "center";
@@ -4018,6 +4025,7 @@
 
   // The Show menu and the folder pill, or neither with no folder drilled into.
   function renderChip() {
+    renderStats();                  // the top right counts what this shows too
     const pick = document.getElementById("layout-pick");
     if (!pick || (state.focus == null && !bar)) { shareHere(); return; }
     if (!bar) buildBar(pick);
@@ -4102,6 +4110,242 @@
       setAddress(open ? pageHref(open, hist.section) : wikiHref(), how || "push",
                  open || null);
     }
+  }
+
+  // ---- stats: what changed this week --------------------------------------
+  // A button at the graph's top right, drawn as Layout is at the top left:
+  // "This week  3 agents · 50 changes", with a green dot while the newest
+  // change is under an hour old. It opens a card: the pages, links and words;
+  // each writer's changes in the last days, with when it last wrote (an agent
+  // gone quiet stays on, greyed, until the server's quiet_days pass); the
+  // pages changed; and the newest change, which opens its page. A writer's
+  // row, or Show, lights those pages and dims the rest, as hovering a folder
+  // does, and a pill beside the button says what is lit and clears it.
+  // Drilled into a folder, everything counts that folder. The changes come
+  // from the server (db.activity) to members only, so a guest, an exported
+  // file and the dexio.wiki demo have no button; it hides while a page is
+  // open (the panel covers the corner) and while onboarding. On a phone it
+  // sits at the bottom right and says only how many changes. Forrest,
+  // 2026-11-07: "in the top right corner of the wiki graph area, it would be
+  // great to see some statistics about the current workspace", then "looks
+  // good" to the proposal (fleet wiki queries/workspace-stats-card). Broken
+  // links are left off on purpose: a count nobody could click is why the
+  // header's counts went on 2026-09-27.
+  const PULSE_S = 3600;
+  const STATS_ROWS = 8;
+  let stats = null;                 // {root, button, card, pill}
+  let statsAct = null, statsFocus = null;   // the activity and folder last counted
+  let statsLoaded = 0;              // when that activity arrived, browser clock
+
+  const fmt = (n) => Number(n || 0).toLocaleString();   // plural() is the history's, above
+  function short(n) {
+    if (n < 10000) return fmt(n);
+    if (n < 1e6) return Math.round(n / 1000) + "K";
+    return (n / 1e6).toFixed(n < 1e7 ? 1 : 0).replace(/\.0$/, "") + "M";
+  }
+  function folderOfPath(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
+
+  // Seconds since `at` on the server's clock, as of now in this browser.
+  function ageOf(at) {
+    const act = state.all.activity;
+    return Math.max(0, act.now + (Date.now() - statsLoaded) / 1000 - at);
+  }
+  function statsAgo(at) {
+    const s = ageOf(at);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+    if (s < 86400) return plural(Math.floor(s / 3600), "hour") + " ago";
+    return plural(Math.floor(s / 86400), "day") + " ago";
+  }
+
+  // The figures for what is shown: the whole wiki, or the folder drilled into.
+  function statsModel() {
+    const act = state.all.activity;
+    if (!act || !Array.isArray(act.changes)) return null;
+    const here = (path) => state.focus == null || inFolder({ folder: folderOfPath(path) }, state.focus);
+    const nodes = state.all.nodes.filter(inFocus);
+    const ids = new Set(nodes.map((n) => n.id));
+    const links = state.all.links.filter((l) => ids.has(l.source) && ids.has(l.target)).length;
+    const rows = new Map();
+    const changed = new Set();
+    let total = 0, latest = null;
+    for (const c of act.changes) {
+      if (!here(c.path)) continue;
+      let r = rows.get(c.who);
+      if (!r) rows.set(c.who, (r = { who: c.who, agent: !!c.agent, n: 0, last: 0, ids: new Set() }));
+      r.n += c.n; r.last = Math.max(r.last, c.last); total += c.n;
+      if (state.byId.has(c.path)) { r.ids.add(c.path); changed.add(c.path); }
+      if (!latest || c.last > latest.at) latest = { who: c.who, path: c.path, at: c.last };
+    }
+    if (state.focus == null) {
+      // the whole wiki: everyone who wrote lately, the quiet ones too
+      for (const w of act.writers || []) {
+        const r = rows.get(w.who);
+        if (r) r.last = Math.max(r.last, w.last);
+        else rows.set(w.who, { who: w.who, agent: !!w.agent, n: 0, last: w.last, ids: new Set() });
+      }
+      latest = act.latest || latest;
+    }
+    const list = [...rows.values()].sort((a, b) => b.n - a.n || b.last - a.last);
+    const active = list.filter((r) => r.n > 0);
+    return {
+      days: act.days || 7, pages: nodes.length, links, total, changed, latest,
+      words: nodes.reduce((s, n) => s + (n.words || 0), 0),
+      rows: [...active, ...list.filter((r) => r.n === 0)].slice(0, Math.max(STATS_ROWS, active.length)),
+      active: active.length, agents: active.every((r) => r.agent),
+    };
+  }
+
+  function buildStats() {
+    const root = document.createElement("div");
+    root.id = "stats-pick";
+    root.innerHTML =
+      `<div id="stats-lit" role="status" hidden></div>` +
+      `<div class="st-anchor"><button id="stats-button" type="button" aria-haspopup="dialog" ` +
+      `aria-expanded="false" aria-controls="stats-card"><span class="st-pulse" hidden></span>` +
+      `<span class="lo-cap">This week</span><span class="lo-now"></span>${MENU_CHEV}</button>` +
+      `<div id="stats-card" role="dialog" aria-label="This week in the wiki" hidden></div></div>`;
+    // after the panel, so its stylesheet can hide this while a page is open
+    if (panel && panel.after) panel.after(root);
+    else if (canvas.parentElement) canvas.parentElement.appendChild(root);
+    const button = root.querySelector("#stats-button"), card = root.querySelector("#stats-card");
+    const pill = root.querySelector("#stats-lit");
+    if (!button || !card || !pill) return;         // no real DOM (the node tests)
+    stats = { root, button, card, pill };
+    button.addEventListener("click", () => (card.hidden ? openStats() : closeStats(true)));
+    card.addEventListener("click", (e) => {
+      const row = e.target.closest("[data-who]");
+      if (row) { lightWriter(row.dataset.who); return; }
+      if (e.target.closest("[data-show-changed]")) { lightChanged(); return; }
+      const page = e.target.closest("[data-page]");
+      if (page && state.byId.has(page.dataset.page)) {
+        closeStats(false);
+        select(state.byId.get(page.dataset.page));
+      }
+    });
+    root.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || card.hidden) return;
+      // stopped here so the window's Escape does not also close the open page
+      e.preventDefault(); e.stopPropagation(); closeStats(true);
+    });
+    pill.addEventListener("click", (e) => { if (e.target.closest(".fc-x")) setLit(null); });
+    window.addEventListener("pointerdown", (e) => { if (!root.contains(e.target)) closeStats(false); });
+  }
+
+  function openStats() {
+    statsCard();
+    stats.card.hidden = false;
+    stats.button.setAttribute("aria-expanded", "true");
+  }
+
+  function closeStats(refocus) {
+    if (!stats || stats.card.hidden) return;
+    stats.card.hidden = true;
+    stats.button.setAttribute("aria-expanded", "false");
+    if (refocus) stats.button.focus();
+  }
+
+  function statsCard() {
+    const m = statsModel();
+    if (!m || !stats) return;
+    const top = Math.max(1, ...m.rows.map((r) => r.n));
+    const rows = m.rows.map((r) => {
+      const quiet = r.n === 0;
+      const on = state.lit && state.lit.key === "who:" + r.who;
+      const cells = `<span class="st-name">${escapeHtml(r.who)}</span>` +
+        `<span class="st-bar"><i style="width:${Math.round((r.n / top) * 100)}%"></i></span>` +
+        `<span class="st-n">${fmt(r.n)}</span><span class="st-ago">${statsAgo(r.last)}</span>`;
+      return quiet || !r.ids.size
+        ? `<div class="st-who${quiet ? " quiet" : ""}" title="${escapeHtml(r.who)} last wrote ${statsAgo(r.last)}">${cells}</div>`
+        : `<button type="button" class="st-who${on ? " on" : ""}" data-who="${escapeHtml(r.who)}" ` +
+          `aria-pressed="${!!on}" title="Light the pages ${escapeHtml(r.who)} changed">${cells}</button>`;
+    }).join("");
+    const latest = m.latest;
+    const latestPage = latest && state.byId.get(latest.path);
+    const where = !latest ? "" : latestPage
+      ? `<button type="button" class="st-page" data-page="${escapeHtml(latest.path)}">` +
+        `${escapeHtml(latestPage.title || latest.path)}</button>`
+      : escapeHtml(latest.path);
+    stats.card.innerHTML =
+      `<div class="st-nums"><div><b>${short(m.pages)}</b><span>${m.pages === 1 ? "page" : "pages"}</span></div>` +
+      `<div><b>${short(m.links)}</b><span>${m.links === 1 ? "link" : "links"}</span></div>` +
+      `<div><b>${short(m.words)}</b><span>${m.words === 1 ? "word" : "words"}</span></div></div>` +
+      `<div class="st-head">Changes in the last ${m.days} days</div>` +
+      (rows || `<p class="st-none">No changes in the last ${m.days} days.</p>`) +
+      (m.changed.size ? `<button type="button" class="st-changed" data-show-changed aria-pressed="` +
+        `${!!(state.lit && state.lit.key === "changed")}"><span>${plural(m.changed.size, "page")} changed</span>` +
+        `<span class="st-show">${state.lit && state.lit.key === "changed" ? "Showing" : "Show"}</span></button>` : "") +
+      (latest ? `<div class="st-foot">Most recent: ${escapeHtml(latest.who)} changed ${where} ` +
+        `${statsAgo(latest.at)}</div>` : "");
+  }
+
+  function setLit(lit) {
+    state.lit = lit && lit.ids.size ? lit : null;
+    if (stats) {
+      stats.pill.hidden = !state.lit;
+      stats.pill.innerHTML = state.lit
+        ? `<span class="st-dot"></span><span class="st-lit-text">${escapeHtml(state.lit.label)}</span>` +
+          `<button type="button" class="fc-x" aria-label="Show every page again" ` +
+          `title="Show every page again">${X_SVG}</button>` : "";
+      if (!stats.card.hidden) statsCard();
+      statsWidth();
+    }
+    draw();
+  }
+
+  function lightWriter(who) {
+    if (state.lit && state.lit.key === "who:" + who) { setLit(null); return; }
+    const m = statsModel(), r = m && m.rows.find((x) => x.who === who);
+    if (!r) return;
+    setLit({ key: "who:" + who, ids: new Set(r.ids),
+             label: `${who} changed ${plural(r.ids.size, "page")} this week` });
+  }
+
+  function lightChanged() {
+    if (state.lit && state.lit.key === "changed") { setLit(null); return; }
+    const m = statsModel();
+    if (!m) return;
+    setLit({ key: "changed", ids: new Set(m.changed),
+             label: `${plural(m.changed.size, "page")} changed this week` });
+  }
+
+  // On every load and every drill: the button's words, or no button at all.
+  function renderStats() {
+    const wrap = canvas.parentElement;
+    const m = statsModel();
+    if (!m) {
+      if (stats) stats.root.hidden = true;
+      if (wrap && wrap.classList) wrap.classList.remove("has-stats");
+      if (state.lit) setLit(null);
+      return;
+    }
+    const fresh = state.all.activity !== statsAct;
+    if (fresh) { statsAct = state.all.activity; statsLoaded = Date.now(); }
+    // what was lit was counted for another wiki or folder
+    if (state.lit && (fresh || statsFocus !== state.focus)) setLit(null);
+    statsFocus = state.focus;
+    if (!stats) buildStats();
+    if (!stats) return;
+    stats.root.hidden = false;
+    if (wrap && wrap.classList) wrap.classList.add("has-stats");
+    const who = m.agents ? ["agent", "agents"] : ["writer", "writers"];
+    const now = stats.button.querySelector(".lo-now");
+    now.innerHTML = m.total
+      ? `<span class="st-who-n">${plural(m.active, who[0], who[1])} · </span>` +
+        `<span class="st-total">${plural(m.total, "change")}</span>`
+      : `<span class="st-total">No changes</span>`;
+    const recent = m.latest && ageOf(m.latest.at) < PULSE_S;
+    stats.button.querySelector(".st-pulse").hidden = !recent;
+    stats.button.setAttribute("aria-label", `This week: ${now.textContent}. Show the details`);
+    if (!stats.card.hidden) statsCard();
+    statsWidth();
+  }
+
+  // How much of the top the stats take, for the row at the top left to wrap short of.
+  function statsWidth() {
+    const wrap = canvas.parentElement;
+    if (!stats || !wrap || !wrap.style || stats.root.offsetWidth == null) return;
+    wrap.style.setProperty("--stats-w", (stats.root.hidden ? 0 : stats.root.offsetWidth + 20) + "px");
   }
 
   // ---- folder tree -------------------------------------------------------

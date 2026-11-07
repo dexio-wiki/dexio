@@ -30,6 +30,14 @@ def test_graph_layout():
 
 
 @pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_graph_stats():
+    suite = Path(__file__).parent / "test_stats.mjs"
+    p = subprocess.run([NODE, str(suite)], capture_output=True, text=True, timeout=120)
+    print(p.stdout)
+    assert p.returncode == 0, p.stdout + p.stderr
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
 def test_graph_folder_focus():
     suite = Path(__file__).parent / "test_focus.mjs"
     p = subprocess.run([NODE, str(suite)], capture_output=True, text=True, timeout=120)

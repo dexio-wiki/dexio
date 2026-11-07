@@ -1352,6 +1352,95 @@ __THEME_HEAD__
   #focus-chip button:focus-visible, #show-button:focus-visible { outline: 2px solid var(--accent);
     outline-offset: 1px; box-shadow: none; }
 
+  /* Top right of the graph: this week's changes, a card behind it, and a pill
+     saying which pages it lit (graph.js, "stats"). Members only; drawn by the
+     script, so an export has none. Under an open page the panel covers the
+     corner, so it goes; on a phone it sits at the bottom right instead, where
+     the footer hint would be. The row at the top left wraps short of it
+     (--stats-w, its width, set by the script). */
+  #stats-pick { position: absolute; top: 12px; right: 12px; z-index: 2;
+                display: flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); }
+  #stats-pick[hidden], #wrap.onboarding #stats-pick { display: none; }
+  #panel.open ~ #stats-pick { visibility: hidden; }
+  #wrap.has-stats #layout-pick { max-width: calc(100% - 66px - var(--stats-w, 0px)); }
+  #wrap.has-stats.tree-open #layout-pick {
+    max-width: calc(100% - var(--tree-w, 264px) - 24px - var(--stats-w, 0px)); }
+  #stats-pick .st-anchor { position: relative; flex: none; }
+  #stats-button {
+    display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 8px 0 10px;
+    border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel);
+    box-shadow: 0 2px 8px rgba(16, 22, 26, .10); color: var(--text);
+    font-size: 13px; white-space: nowrap; cursor: pointer;
+  }
+  #stats-button:hover, #stats-button[aria-expanded="true"] { border-color: var(--accent); }
+  #stats-button .lo-cap { color: var(--muted); }
+  #stats-button .lo-now { font-weight: 600; }
+  #stats-button .sw-chev { stroke: var(--muted); }
+  #stats-button .st-pulse, #stats-lit .st-dot { flex: none; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--good-text); }
+  #stats-button .st-pulse[hidden] { display: none; }
+  #stats-lit .st-dot { background: var(--accent); }
+  #stats-button:focus-visible, #stats-card button:focus-visible, #stats-lit button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: none; }
+  #stats-card {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: 300px;
+    max-width: calc(100vw - 24px); max-height: min(560px, calc(100dvh - 160px)); overflow: auto;
+    padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+    color: var(--text); box-shadow: var(--shadow); font-size: 13px;
+  }
+  #stats-card[hidden] { display: none; }
+  #stats-card .st-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+    padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
+  #stats-card .st-nums b { display: block; font-size: 18px; font-weight: 600;
+    font-variant-numeric: tabular-nums; }
+  #stats-card .st-nums span { color: var(--muted); font-size: 12px; }
+  #stats-card .st-head { margin: 10px 4px 4px; color: var(--muted); font-size: 11.5px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  #stats-card .st-who {
+    display: grid; grid-template-columns: minmax(0, 72px) 1fr auto 76px; align-items: center;
+    gap: 8px; width: 100%; min-height: 30px; margin: 0; padding: 4px 6px; border: 0;
+    border-radius: 6px; background: none; color: var(--text); font: inherit; text-align: left;
+  }
+  #stats-card button.st-who { cursor: pointer; }
+  #stats-card button.st-who:hover { background: var(--sunken); }
+  #stats-card .st-who.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  #stats-card .st-name { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-weight: 600; }
+  #stats-card .st-bar { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; }
+  #stats-card .st-bar i { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+  #stats-card .st-n { text-align: right; font-variant-numeric: tabular-nums; }
+  #stats-card .st-ago { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  #stats-card .st-who.quiet .st-name, #stats-card .st-who.quiet .st-n { color: var(--muted);
+    font-weight: 400; }
+  #stats-card .st-who.quiet .st-ago { color: var(--warn-text); }
+  #stats-card .st-none { margin: 4px; color: var(--muted); }
+  #stats-card .st-changed {
+    display: flex; justify-content: space-between; align-items: center; width: 100%;
+    margin: 8px 0 0; padding: 9px 6px 7px; border: 0; border-top: 1px solid var(--line);
+    border-radius: 0; background: none; color: var(--text); font: inherit; cursor: pointer;
+  }
+  #stats-card .st-changed:hover .st-show { text-decoration: underline; }
+  #stats-card .st-show { color: var(--link); font-weight: 600; }
+  #stats-card .st-foot { margin: 4px 6px 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+  #stats-card .st-page { display: inline; min-height: 0; padding: 0; border: 0; background: none;
+    color: var(--link); font: inherit; text-align: left; cursor: pointer; }
+  #stats-card .st-page:hover { text-decoration: underline; }
+  #stats-lit {
+    display: inline-flex; align-items: center; gap: 7px; min-width: 0; height: 34px;
+    padding: 0 3px 0 10px; border: 1px solid var(--accent); border-radius: 9px;
+    background: color-mix(in srgb, var(--accent) 9%, var(--panel)); color: var(--text);
+    box-shadow: 0 2px 8px rgba(16, 22, 26, .10); font-size: 13px;
+  }
+  #stats-lit[hidden] { display: none; }
+  #stats-lit .st-lit-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #stats-lit .fc-x {
+    flex: none; display: grid; place-items: center; width: 28px; height: 28px; min-height: 0;
+    padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); cursor: pointer;
+  }
+  #stats-lit .fc-x:hover { background: var(--sunken); color: var(--text); }
+  #stats-lit .fc-x svg { width: 15px; height: 15px; fill: none; stroke: currentColor;
+    stroke-width: 1.8; stroke-linecap: round; }
+
   /* The Share dialog, laid out as Google Docs' is. */
   body.sd-open { overflow: hidden; }
   .sd-backdrop { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center;
@@ -1602,6 +1691,16 @@ __THEME_HEAD__
     /* the tree is a drawer here, so the menu stays beside its button */
     #layout-pick, #wrap.tree-open #layout-pick { left: 60px; }
     #layout-button { height: var(--tap); }
+    /* the stats at the bottom right, saying only how many changes, the card
+       opening upwards; the top row has the width to itself again */
+    #wrap.has-stats #layout-pick, #wrap.has-stats.tree-open #layout-pick {
+      max-width: calc(100% - 66px); }
+    #stats-pick { top: auto; bottom: max(12px, env(safe-area-inset-bottom)); }
+    #stats-button { height: var(--tap); }
+    #stats-button .lo-cap, #stats-button .st-who-n { display: none; }
+    #stats-card { top: auto; bottom: calc(100% + 6px); max-height: calc(100dvh - 200px); }
+    #stats-card .st-who { min-height: var(--tap); }
+    #stats-lit { height: var(--tap); }
     #layout-menu .sw-item { min-height: var(--tap); }
     #tree .row { min-height: 36px; }
     header h1 { font-size: 14px; }
