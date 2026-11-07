@@ -4115,8 +4115,8 @@
   // ---- stats: what changed this week --------------------------------------
   // A button at the graph's top right, drawn as Layout is at the top left:
   // "This week  3 agents · 50 changes", with a green dot while the newest
-  // change is under an hour old. It opens a card: the pages, links and words;
-  // each writer's changes in the last days, with when it last wrote (an agent
+  // change is under an hour old. It opens a card: each writer's changes in
+  // the last days, with when it last wrote (an agent
   // gone quiet stays on, greyed, until the server's quiet_days pass); the
   // pages changed; and the newest change, which opens its page. A writer's
   // row, or Show, lights those pages and dims the rest, as hovering a folder
@@ -4130,7 +4130,11 @@
   // great to see some statistics about the current workspace", then "looks
   // good" to the proposal (fleet wiki queries/workspace-stats-card). Broken
   // links are left off on purpose: a count nobody could click is why the
-  // header's counts went on 2026-09-27.
+  // header's counts went on 2026-09-27. The wiki's totals (pages, links,
+  // words) were at the top of the card until Forrest found they read as this
+  // week's ("it makes me think that 409 pages, 2170 links, 951K words was all
+  // this week") and asked for them "under [workspace name]" in the account
+  // menu, where they are now (render.py, acctStats).
   const PULSE_S = 3600;
   const STATS_ROWS = 8;
   let stats = null;                 // {root, button, card, pill}
@@ -4138,17 +4142,7 @@
   let statsLoaded = 0;              // when that activity arrived, browser clock
 
   const fmt = (n) => Number(n || 0).toLocaleString();   // plural() is the history's, above
-  function short(n) {
-    if (n < 10000) return fmt(n);
-    if (n < 1e6) return Math.round(n / 1000) + "K";
-    return (n / 1e6).toFixed(n < 1e7 ? 1 : 0).replace(/\.0$/, "") + "M";
-  }
   function folderOfPath(p) { const i = p.lastIndexOf("/"); return i < 0 ? "" : p.slice(0, i); }
-
-  // What the card's totals count, named over them: under a button that says
-  // "This week" they read as this week's otherwise (Forrest, 2026-11-07: "it
-  // makes me think that 409 pages, 2170 links, 951K words was all this week").
-  function statsScope() { return state.focus == null ? "In this wiki" : `In ${state.focus}`; }
 
   // Seconds since `at` on the server's clock, as of now in this browser.
   function ageOf(at) {
@@ -4168,9 +4162,6 @@
     const act = state.all.activity;
     if (!act || !Array.isArray(act.changes)) return null;
     const here = (path) => state.focus == null || inFolder({ folder: folderOfPath(path) }, state.focus);
-    const nodes = state.all.nodes.filter(inFocus);
-    const ids = new Set(nodes.map((n) => n.id));
-    const links = state.all.links.filter((l) => ids.has(l.source) && ids.has(l.target)).length;
     const rows = new Map();
     const changed = new Set();
     let total = 0, latest = null;
@@ -4194,8 +4185,7 @@
     const list = [...rows.values()].sort((a, b) => b.n - a.n || b.last - a.last);
     const active = list.filter((r) => r.n > 0);
     return {
-      days: act.days || 7, pages: nodes.length, links, total, changed, latest,
-      words: nodes.reduce((s, n) => s + (n.words || 0), 0),
+      days: act.days || 7, total, changed, latest,
       rows: [...active, ...list.filter((r) => r.n === 0)].slice(0, Math.max(STATS_ROWS, active.length)),
       active: active.length, agents: active.every((r) => r.agent),
     };
@@ -4272,11 +4262,7 @@
         `${escapeHtml(latestPage.title || latest.path)}</button>`
       : escapeHtml(latest.path);
     stats.card.innerHTML =
-      `<div class="st-head st-first">${escapeHtml(statsScope())}</div>` +
-      `<div class="st-nums"><div><b>${short(m.pages)}</b><span>${m.pages === 1 ? "page" : "pages"}</span></div>` +
-      `<div><b>${short(m.links)}</b><span>${m.links === 1 ? "link" : "links"}</span></div>` +
-      `<div><b>${short(m.words)}</b><span>${m.words === 1 ? "word" : "words"}</span></div></div>` +
-      `<div class="st-head">Changes in the last ${m.days} days</div>` +
+      `<div class="st-head st-first">Changes in the last ${m.days} days</div>` +
       (rows || `<p class="st-none">No changes in the last ${m.days} days.</p>`) +
       (m.changed.size ? `<button type="button" class="st-changed" data-show-changed aria-pressed="` +
         `${!!(state.lit && state.lit.key === "changed")}"><span>${plural(m.changed.size, "page")} changed</span>` +

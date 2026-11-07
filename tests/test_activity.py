@@ -58,6 +58,21 @@ def test_activity_leaves_out_baseline_rows(conn):
     assert a["changes"] == [] and a["writers"] == [] and a["latest"] is None
 
 
+def test_account_menu_has_room_for_the_wikis_totals_under_the_workspace():
+    """The totals (pages, links, words) sit under the workspace's name in the
+    account menu (Forrest, 2026-11-07), filled from the graph for members only:
+    the graph comes with activity for members alone (render.py, acctStats)."""
+    from dexio import render
+    menu = render.account_menu("Forrest Zhang", "f@example.com", "Forrest", "Zhang", "VantaSoft")
+    head = menu.index('<div class="sw-head">VantaSoft</div>')
+    assert menu.index('<div class="ac-stats" hidden></div>') > head
+    assert menu.index('<div class="ac-stats"') < menu.index('href="/settings"')
+    js = render.APP_JS
+    assert "function acctStats(data)" in js
+    assert "data && data.activity && data.stats" in js
+    assert js.count("acctStats(data);") == 2            # first load, and the empty wiki's watch
+
+
 pytest.importorskip("fastapi")
 pytest.importorskip("mcp")
 

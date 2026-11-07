@@ -147,6 +147,8 @@ def account_menu(name: str, email: str, first: str = "", last: str = "",
         + '</span></div>'
         '<div class="sw-rule"></div>'
         f'<div class="sw-head">{esc(workspace)}</div>'
+        # its wiki's totals, put in by the graph view once the graph arrives (APP_JS)
+        '<div class="ac-stats" hidden></div>'
         + item("settings", "Settings", "/settings") + team
         + item("connect", "Connect an agent", "/settings/agents?connect")
         + '<div class="sw-rule"></div>'
@@ -694,6 +696,7 @@ APP_JS = r"""
       if (data.nodes && data.nodes.length) {
         closeFlow();
         window.dexio.load(data);
+        acctStats(data);
       }
     }, 4000);
   }
@@ -744,6 +747,28 @@ APP_JS = r"""
     openAsked(want.page, want.sec, e.state && e.state.dexio ? e.state.top : 0);
   });
 
+  // The account menu's workspace heading, then its wiki's totals: pages, links
+  // and words (Forrest, 2026-11-07: "perhaps statistics under [workspace name]
+  // in the modal", after the totals at the top of the graph's This week card
+  // read as this week's). From the graph just fetched, and only for a member:
+  // the graph a guest gets is another workspace's, or part of one, while the
+  // menu names the guest's own. Members are the ones the graph comes with
+  // activity for (db.activity).
+  function acctStats(data) {
+    const box = document.querySelector("#acct-menu .ac-stats");
+    const s = data && data.activity && data.stats;
+    if (!box || !s || !data.nodes || !data.nodes.length) return;
+    const n = (v) => Number(v || 0).toLocaleString();
+    const one = (v, word) => `${n(v)} ${word}${v === 1 ? "" : "s"}`;
+    const words = s.words || 0;
+    const short = words < 10000 ? n(words) : words < 1e6 ? Math.round(words / 1000) + "K"
+      : (words / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+    box.textContent = `${one(s.pages, "page")} · ${one(s.links, "link")} · ${short} ` +
+      `word${words === 1 ? "" : "s"}`;
+    box.title = `${one(s.pages, "page")}, ${one(s.links, "link")}, ${one(words, "word")}`;
+    box.hidden = false;
+  }
+
   // The graph is fetched at once. An empty wiki arrives from the server already
   // in its onboarding state, and the flow and the folders stay as they are until
   // the graph answers: clearing that first showed the folders, the layout picker
@@ -762,6 +787,7 @@ APP_JS = r"""
     if (empty) wrap.classList.add("onboarding");
     else closeFlow();
     window.dexio.load(data || {nodes: [], links: [], stats: {}}, {focus: want.folder});
+    acctStats(data);
     // Someone viewing what a workspace shares (shares.py) is never onboarded:
     // with nothing to show, the share was removed or its pages went.
     if (empty && window.DEXIO_GUEST) {

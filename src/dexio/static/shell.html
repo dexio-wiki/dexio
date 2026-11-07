@@ -466,6 +466,11 @@ __THEME_HEAD__
   .ac-id b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ac-id span { color: var(--muted); font-size: 12.5px; overflow: hidden;
                 text-overflow: ellipsis; white-space: nowrap; }
+  /* under the workspace's name: its wiki's pages, links and words (render.py, acctStats) */
+  .ac-stats { padding: 0 10px 6px; color: var(--muted); font-size: 12.5px;
+              font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden;
+              text-overflow: ellipsis; }
+  .ac-stats[hidden] { display: none; }
   #acct-menu form { margin: 0; }
   #acct-menu a.sw-item { text-decoration: none; }
   .ac-icon { flex: none; width: 16px; height: 16px; fill: none; stroke: var(--muted);
@@ -1389,13 +1394,7 @@ __THEME_HEAD__
     color: var(--text); box-shadow: var(--shadow); font-size: 13px;
   }
   #stats-card[hidden] { display: none; }
-  #stats-card .st-nums { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
-    padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
-  #stats-card .st-nums b { display: block; font-size: 18px; font-weight: 600;
-    font-variant-numeric: tabular-nums; }
-  #stats-card .st-nums span { color: var(--muted); font-size: 12px; }
-  #stats-card .st-head.st-first { margin-top: 0; overflow: hidden; text-overflow: ellipsis;
-    white-space: nowrap; }
+  #stats-card .st-head.st-first { margin-top: 0; }
   #stats-card .st-head { margin: 10px 4px 4px; color: var(--muted); font-size: 11.5px;
     font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   #stats-card .st-who {

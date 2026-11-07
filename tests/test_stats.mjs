@@ -43,10 +43,9 @@ globalThis.localStorage = {
 const wrapped = src.replace(
   "window.dexio = { load, resize, select };",
   "window.dexio = { load, resize, select, state, setFocus, statsModel, lightWriter, lightChanged, " +
-  "setLit, matches, statsAgo, statsScope };");
+  "setLit, matches, statsAgo };");
 new Function(wrapped)();
-const { load, state, setFocus, statsModel, lightWriter, lightChanged, setLit, matches, statsAgo,
-        statsScope } =
+const { load, state, setFocus, statsModel, lightWriter, lightChanged, setLit, matches, statsAgo } =
   globalThis.window.dexio;
 
 const NOW = 2_000_000_000;
@@ -86,12 +85,11 @@ ok("no activity (a guest, an export, the demo) means no stats", () => {
   assert.equal(statsModel(), null);
 });
 
-ok("the whole wiki: size, writers busiest first, the quiet one last", () => {
+ok("the whole wiki: writers busiest first, the quiet one last", () => {
   load(wiki(activity()));
   const m = statsModel();
-  assert.equal(m.pages, 4);
-  assert.equal(m.links, 3);
-  assert.equal(m.words, 1115);
+  // the wiki's totals moved to the account menu (render.py, acctStats)
+  assert.equal(m.pages, undefined);
   assert.equal(m.total, 10);
   assert.equal(m.active, 2);
   assert.equal(m.agents, true);
@@ -112,9 +110,6 @@ ok("drilled into a folder, everything counts that folder and the quiet go", () =
   load(wiki(activity()));
   setFocus("notes");
   const m = statsModel();
-  assert.equal(m.pages, 2);
-  assert.equal(m.links, 1);
-  assert.equal(m.words, 110);
   assert.deepEqual(m.rows.map((r) => [r.who, r.n]), [["iris", 4]]);
   assert.equal(m.latest.path, "notes/plan");
   setFocus(null);
@@ -145,14 +140,6 @@ ok("Show lights every page changed; drilling in or another wiki clears it", () =
   assert.ok(state.lit);
   load(wiki(activity()));
   assert.equal(state.lit, null);
-});
-
-ok("the totals say what they count, so they do not read as this week's", () => {
-  load(wiki(activity()));
-  assert.equal(statsScope(), "In this wiki");
-  setFocus("notes/deep");
-  assert.equal(statsScope(), "In notes/deep");
-  setFocus(null);
 });
 
 ok("nothing to light is no light", () => {
