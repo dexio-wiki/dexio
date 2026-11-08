@@ -156,3 +156,20 @@ def test_guests_see_status_and_sources_too(app):
     public(c, handle, "wiki", "")
     said = note(browser(app), "index", w=handle)["info"]["okf"]
     assert said["status"] == "draft" and len(said["sources"]) == 2
+
+
+def test_a_pages_picture_is_a_file_in_the_wiki_with_an_optional_caption():
+    """image: and image_caption: (Forrest, 2026-11-07: "an optional image for each
+    wiki page, like wikipedia.org does")."""
+    def img(fm):
+        return okf.summary("---\n" + fm + "\n---\n# T\n").get("image")
+    assert img("image: raw/images/iris.jpg\nimage_caption: Iris Lane") == \
+        {"path": "raw/images/iris.jpg", "caption": "Iris Lane"}
+    assert img("image: 'raw/a b.png'") == {"path": "raw/a b.png"}
+    assert img("image: '![[raw/a.png|alt]]'") == {"path": "raw/a.png"}, "an embed, as written in text"
+    assert img("image: '[[raw/a.png]]'") == {"path": "raw/a.png"}
+    for outside in ("https://example.com/a.png", "//cdn.example.com/a.png", "data:image/png;base64,AA"):
+        assert img(f"image: '{outside}'") is None, outside
+    assert img("image: ''") is None and img("image: [a.png]") is None
+    assert img("image_caption: no picture") is None
+    assert okf.summary("# no frontmatter\n") == {}

@@ -102,3 +102,43 @@ def test_render_page_alone():
 
 
 from test_sharing import sent  # noqa: E402,F401
+
+
+def test_a_pages_picture_shows_and_is_its_link_preview(app):
+    """Frontmatter image: (Forrest, 2026-11-07): the picture in the HTML for readers
+    without JavaScript, the link preview's picture, and a file anyone who may read
+    the page may open, though it sits outside the shared folder."""
+    c, tok, handle = owner_with_wiki(app)
+    assert c.put("/api/v1/files?path=raw/images/iris.jpg", content=b"jpeg").status_code == 200
+    assert mcp(app, tok, "write_page", path="notes/iris", text=(
+        "---\nimage: raw/images/iris.jpg\nimage_caption: Iris <Lane>\n---\n# Iris\n\nHello.\n"
+    )).get("ok")
+    public(c, handle, "folder", "notes")
+    anon = browser(app)
+    html = anon.get(f"/w/{handle}/notes/iris", headers=HTML).text
+    href = f"/api/v1/files?w={handle}&amp;path=raw/images/iris.jpg"
+    assert f'<meta property="og:image" content="https://app.dexio.wiki{href}">' in html
+    assert '<meta property="og:image:alt" content="Iris &lt;Lane&gt;">' in html
+    assert '<meta name="twitter:card" content="summary_large_image">' in html
+    a = article(html)
+    assert a.index('<figure class="ssr-image">') < a.index("Hello."), "above the text"
+    assert f'<img src="{href}" alt="Iris &lt;Lane&gt;"><figcaption>Iris &lt;Lane&gt;</figcaption>' in a
+    assert anon.get(f"/api/v1/files?w={handle}&path=raw/images/iris.jpg").status_code == 302
+    # a public page without one keeps the small card and names no picture
+    plain = anon.get(f"/w/{handle}/notes/plan", headers=HTML).text
+    assert '<meta name="twitter:card" content="summary">' in plain and "og:image" not in plain
+    # agents see it in read_page and list_pages
+    head = mcp(app, tok, "read_page", path="notes/iris")
+    assert head["image"] == "raw/images/iris.jpg"
+    listed = {p["path"]: p for p in mcp(app, tok, "list_pages", folder="notes")["pages"]}
+    assert listed["notes/iris"]["image"] == "raw/images/iris.jpg"
+    assert "image" not in listed["notes/plan"]
+
+
+def test_a_picture_that_names_no_file_shows_nothing(app):
+    c, tok, handle = owner_with_wiki(app)
+    assert mcp(app, tok, "write_page", path="notes/gone", text=(
+        "---\nimage: raw/images/gone.jpg\n---\n# Gone\n\nText.\n")).get("ok")
+    public(c, handle, "folder", "notes")
+    html = browser(app).get(f"/w/{handle}/notes/gone", headers=HTML).text
+    assert "og:image" not in html and "ssr-image" not in article(html)

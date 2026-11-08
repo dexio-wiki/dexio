@@ -134,6 +134,9 @@ When to use it:
 - Frontmatter can carry two of the Open Knowledge Format's fields: status (draft, stable
   or deprecated), and sources, a list of { id, resource, title }, where a footnote
   labelled with a source's id, [^id], cites it.
+- A page can have a picture: image: names a file in the wiki (upload it with upload_file
+  first; an outside address is ignored), and image_caption: goes under it. It shows at the
+  top right of the page and is the picture when a shared page's link is posted.
 - Leave out small talk, one-off lookups, unfinished drafts, secrets, and anything the user
   asks you to keep out of the wiki.
 
@@ -873,6 +876,8 @@ def build_mcp(conn) -> MCPServer:
                 p["description"] = r["description"]
             if r.get("status") and r["status"] != "stable":
                 p["status"] = r["status"]
+            if r.get("image"):
+                p["image"] = r["image"]
             p.update(words=r["words"], updated=_iso(r["updated_at"]))
             pages.append(p)
         out = {"folder": prefix, "count": len(paths), "pages": pages}
@@ -1045,9 +1050,13 @@ def build_mcp(conn) -> MCPServer:
                         "words": page["words"], "updated": _iso(page["updated_at"]),
                         "links_out": [x for x in links_out if acc.sees(x)],
                         "links_in": [x for x in links_in if acc.sees(x)]}
-            st = okf.status(okf.fields(text)) if text.startswith("---") else None
+            fm = okf.fields(text) if text.startswith("---") else {}
+            st = okf.status(fm)
             if st:
                 meta["status"] = st
+            img = okf.image(fm)
+            if img:
+                meta["image"] = img["path"]
         total = len(keep_lines(text))
         meta["total_lines"] = total
         heads = page_outline(text)

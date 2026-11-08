@@ -332,8 +332,32 @@ def sources(fm: dict) -> list[dict]:
     return out
 
 
+def image(fm: dict) -> dict | None:
+    """The page's picture (Forrest, 2026-11-07: "we should support an optional
+    image for each wiki page, like wikipedia.org does"): `image:` a file in the
+    wiki, and `image_caption:` under it. The path is kept as written (an embed's
+    `![[...]]` taken off); the web view resolves it as it does an embed. An outside
+    address is not a picture: it can vanish, and it would tell another site who
+    reads the page."""
+    v = fm.get("image")
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    m = re.fullmatch(r"!?\[\[([^\]|]+)(?:\|[^\]]*)?\]\]", v)
+    if m:
+        v = m.group(1).strip()
+    if not v or "://" in v or v.startswith(("//", "data:")):
+        return None
+    out = {"path": v[:500]}
+    cap = fm.get("image_caption")
+    if isinstance(cap, (str, int)) and str(cap).strip():
+        out["caption"] = str(cap).strip()[:300]
+    return out
+
+
 def summary(text: str) -> dict:
-    """What the page says about itself, only the keys it has: status and sources."""
+    """What the page says about itself, only the keys it has: status, sources
+    and image."""
     fm = fields(text)
     if not fm:
         return {}
@@ -344,4 +368,7 @@ def summary(text: str) -> dict:
     src = sources(fm)
     if src:
         out["sources"] = src
+    img = image(fm)
+    if img:
+        out["image"] = img
     return out

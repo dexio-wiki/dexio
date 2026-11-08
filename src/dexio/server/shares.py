@@ -254,6 +254,12 @@ def _file_targets(text: str) -> list[str]:
     body = mask_code(text or "")
     out = [m.split("|", 1)[0] for m in _WIKILINK.findall(body)]
     out += [m for m in _MDLINK.findall(body) if "://" not in m and not m.startswith("mailto:")]
+    # The page's picture (frontmatter image:, okf.image) is shown on it too.
+    if (text or "").startswith("---"):
+        from .. import okf
+        img = okf.image(okf.fields(text))
+        if img:
+            out.append(img["path"])
     return [t.split("#", 1)[0].strip() for t in out if is_file_link(t)]
 
 

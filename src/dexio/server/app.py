@@ -2240,7 +2240,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
         # keep their previews but say noindex (Forrest, 2026-10-01).
         listed_acc = shares.published_access(conn, ws["id"])
         indexable = listed_acc.any and (listed_acc.sees(page) if row else not page)
-        title, seo = f"{ws['name']} · Dexio", None
+        title, seo, picture = f"{ws['name']} · Dexio", None, None
         if public:
             from ..parse import description_of
             url = f"{issuer}/w/{ws['handle']}" + (f"/{quote(page, safe='/')}" if row else "")
@@ -2250,6 +2250,15 @@ def get_app(db_path: str | None = None) -> FastAPI:
             else:
                 about = f"{ws['name']}, a wiki on Dexio."
             seo = {"url": url, "title": title, "description": about, "site": ws["name"]}
+            # The page's picture is its link preview's (Forrest, 2026-11-07).
+            if row:
+                try:
+                    picture = ssr.page_image(conn, db.wiki_key(ws["id"]), dict(row))
+                except Exception:  # noqa: BLE001
+                    log.exception("page picture failed for %s %r", ws["handle"], page)
+                if picture:
+                    seo["image"] = issuer + ssr.file_href(ws["handle"], picture["path"])
+                    seo["image_alt"] = picture.get("caption") or row["title"] or page
         # The page's text and links in the HTML, for readers and crawlers that run no
         # JavaScript (server/ssr.py; Forrest, 2026-10-01). Links reach only what anyone
         # may read. An enhancement: if it fails, the page still loads without it.
@@ -2259,7 +2268,7 @@ def get_app(db_path: str | None = None) -> FastAPI:
                 key = db.wiki_key(ws["id"])
                 if row:
                     rendered = ssr.page_article(conn, key, ws["handle"], ws["name"], row,
-                                                anyone.sees)
+                                                anyone.sees, image=picture)
                 else:
                     rendered = ssr.list_article(conn, key, ws["handle"], ws["name"],
                                                 request.query_params.get("folder", ""),

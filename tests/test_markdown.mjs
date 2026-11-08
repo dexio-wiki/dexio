@@ -34,10 +34,10 @@ const wrapped = src.replace(
   "window.dexio = { load, resize, select };",
   "window.dexio = { load, resize, select, renderMarkdown, resolveWikiLink, state, " +
   "buildTree, treeHtml, defaultExpanded, backlinks, rankedMatches, termPattern, " +
-  "matchedFolders, findRows, sourcesBlock };");
+  "matchedFolders, findRows, sourcesBlock, pageImage };");
 new Function(wrapped)();
 const { renderMarkdown, state, buildTree, treeHtml, defaultExpanded, backlinks, rankedMatches, termPattern,
-        matchedFolders, findRows, sourcesBlock } = globalThis.window.dexio;
+        matchedFolders, findRows, sourcesBlock, pageImage } = globalThis.window.dexio;
 
 // pretend these pages exist
 for (const id of ["entities/acme-corp", "index", "people/jane-doe"]) {
@@ -620,6 +620,22 @@ check("the page's own note wins over a source with the same id", () => {
   const html = renderMarkdown("Claim[^policy].\n\n[^policy]: Our own words.", "x", "", SOURCES, cited);
   assert.ok(html.includes('<li id="fn-1">Our own words.'), html);
   assert.equal(cited.size, 0);
+});
+
+check("a page's picture: the file it names, its caption under it, opening at full size", () => {
+  window.DEXIO_API = "/api/v1"; window.DEXIO_PROJECT = "main";
+  state.files = new Set(["raw/images/iris.jpg"]);
+  const n = { id: "agents/iris", title: "Iris <Lane>" };
+  const html = pageImage({ path: "raw/images/iris.jpg", caption: "Iris, from [[agents/iris]] <b>x</b>" }, n);
+  assert.ok(html.startsWith('<figure class="page-image"><a href="/api/v1/files?path=raw%2Fimages%2Firis.jpg" target="_blank" rel="noopener">'), html);
+  assert.ok(html.includes('alt="Iris, from [[agents/iris]] &lt;b&gt;x&lt;/b&gt;"'), html);
+  assert.ok(html.includes("<figcaption>") && !html.includes("<b>x</b>"), "the caption is escaped");
+  // resolved as an embed is: by file name when that is unique
+  assert.ok(pageImage({ path: "iris.jpg" }, n).includes('alt="Iris &lt;Lane&gt;"'), "no caption: the title");
+  assert.ok(!pageImage({ path: "iris.jpg" }, n).includes("figcaption"));
+  assert.equal(pageImage({ path: "raw/images/gone.jpg" }, n), "", "no file, no picture");
+  assert.equal(pageImage(null, n), "");
+  state.files = new Set();
 });
 
 check("sources no footnote cites are listed under Sources", () => {

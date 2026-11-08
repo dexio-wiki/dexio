@@ -1021,7 +1021,11 @@ def server_page(api_base: str, title: str = "Dexio",
                 f'\n<meta property="og:description" content="{e(seo["description"])}">'
                 f'\n<meta property="og:url" content="{e(seo["url"])}">'
                 f'\n<meta property="og:site_name" content="{e(seo.get("site"))}">'
-                f'\n<meta name="twitter:card" content="summary">')
+                f'\n<meta name="twitter:card" content="'
+                f'{"summary_large_image" if seo.get("image") else "summary"}">')
+        if seo.get("image"):
+            meta += (f'\n<meta property="og:image" content="{e(seo["image"])}">'
+                     f'\n<meta property="og:image:alt" content="{e(seo.get("image_alt"))}">')
         out = out.replace("</title>", "</title>" + meta, 1)
     if ssr:
         # Between the header and the app, so a reader without JavaScript gets the

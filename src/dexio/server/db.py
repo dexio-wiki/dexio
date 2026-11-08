@@ -1501,8 +1501,8 @@ def _folder_where(folder: str) -> tuple[str, tuple]:
 def page_list(conn, project: str, folder: str = "", limit: int | None = None,
               offset: int = 0) -> list[dict]:
     """A wiki's pages (or one folder's) in path order, each with its one-line
-    description (parse.description_of) and its frontmatter status (okf.status),
-    read from the top of the page only.
+    description (parse.description_of), its frontmatter status (okf.status) and
+    picture (okf.image), read from the top of the page only.
     limit and offset take one slice of that order."""
     from .. import okf
     from ..parse import DESCRIPTION_SOURCE, description_of
@@ -1519,7 +1519,10 @@ def page_list(conn, project: str, folder: str = "", limit: int | None = None,
         d = dict(r)
         head = d.pop("head") or ""
         d["description"] = description_of(head)
-        d["status"] = okf.status(okf.fields(head)) if head.startswith("---") else None
+        fm = okf.fields(head) if head.startswith("---") else {}
+        d["status"] = okf.status(fm)
+        img = okf.image(fm)
+        d["image"] = img["path"] if img else None
         out.append(d)
     return out
 

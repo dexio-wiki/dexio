@@ -2437,8 +2437,21 @@
     const old = meta && meta.status === "deprecated"
       ? `<p class="page-notice" role="note">This page is deprecated. It is kept for its links and ` +
         `history and is no longer current.</p>` : "";
-    return old + (text ? `<article class="md">${text}</article>` : "") +
+    const fig = pageImage(meta && meta.image, n);
+    return old + (text || fig ? `<article class="md">${fig}${text}</article>` : "") +
       sourcesBlock(sources, cited, n.id) + backlinks(ins);
+  }
+
+  // The page's picture (frontmatter `image:` and `image_caption:`, okf.py), at
+  // the top of the text, which runs beside it. A path no file answers to shows
+  // nothing. Clicking it opens the file at full size.
+  function pageImage(img, n) {
+    const f = img && resolveFile(String(img.path || ""), n.id);
+    if (!f) return "";
+    const cap = img.caption ? String(img.caption) : "";
+    return `<figure class="page-image"><a href="${escapeHtml(fileUrl(f))}" target="_blank" ` +
+      `rel="noopener"><img src="${escapeHtml(fileUrl(f))}" alt="${escapeHtml(cap || n.title || n.id)}">` +
+      `</a>${cap ? `<figcaption>${inline(cap, n.id)}</figcaption>` : ""}</figure>`;
   }
 
   // body null: the text is on its way, so the placeholder stands in for it.

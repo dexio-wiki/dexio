@@ -16,8 +16,9 @@ Markdown is CommonMark with tables (markdown-it-py), raw HTML escaped, plus what
 app's renderer adds: [[wikilinks]] and "•" bullets. A link reaches another page only
 if the reader may see it, and then by its public address; otherwise its words stay as
 plain text, as the app shows them to a guest. Outside links get rel="ugc nofollow",
-as everywhere a guest reads. Images show their alt text: files are served through
-signed addresses the HTML cannot hold.
+as everywhere a guest reads. Images in the text show their alt text. The page's
+picture (frontmatter image:) is shown, through the file's lasting address
+(/api/v1/files, which redirects to the bytes for anyone who may read the page).
 """
 from __future__ import annotations
 
@@ -162,14 +163,40 @@ def _page_list(items: list[dict], handle: str) -> str:
     return "<ul>" + "".join(rows) + "</ul>" if rows else ""
 
 
-def page_article(conn, key: str, handle: str, workspace: str, row: dict, sees) -> str:
-    """The whole block for one page: title, text, then the pages beside it (its top
-    folder's pages the reader may open, nearest first)."""
+def page_image(conn, key: str, row: dict) -> dict | None:
+    """The page's picture (frontmatter image:, okf.image) as {path, caption}, its
+    path the wiki file it names, resolved as the app resolves an embed; None when
+    it names none or no file answers to it."""
+    from .. import okf
+    from . import files, shares
+    text = row.get("text") or ""
+    img = okf.image(okf.fields(text)) if text.startswith("---") else None
+    if not img:
+        return None
+    paths = {f["path"] for f in files.list_files(conn, key)}
+    hit = shares._resolve_file(img["path"], row["path"], paths)
+    return {**img, "path": hit} if hit else None
+
+
+def file_href(handle: str, path: str) -> str:
+    """A file's lasting address: it redirects to the bytes for whoever may open it."""
+    return f"/api/v1/files?w={quote(handle, safe='')}&path={quote(path, safe='/')}"
+
+
+def page_article(conn, key: str, handle: str, workspace: str, row: dict, sees,
+                 image: dict | None = None) -> str:
+    """The whole block for one page: title, its picture, text, then the pages beside
+    it (its top folder's pages the reader may open, nearest first)."""
     from . import db
     path = row["path"]
     title = row.get("title") or title_of(row.get("text") or "", path)
     paths = db.page_paths(conn, key)
     body = render_page(row.get("text") or "", path, title, handle, paths, sees)
+    if image:
+        cap = image.get("caption") or ""
+        body = (f'<figure class="ssr-image"><img src="{e(file_href(handle, image["path"]))}"'
+                f' alt="{e(cap or title)}">' + (f"<figcaption>{e(cap)}</figcaption>" if cap else "")
+                + "</figure>\n" + body)
     top = path.split("/", 1)[0] if "/" in path else ""
     near = [p for p in db.page_list(conn, key, top, limit=LIST_PAGES)
             if p["path"] != path and sees(p["path"])]

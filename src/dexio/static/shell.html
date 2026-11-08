@@ -1045,6 +1045,26 @@ __THEME_HEAD__
   /* ---- rendered page body ---- */
   .md { font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
   .md img.md-img { max-width: 100%; height: auto; border-radius: 4px; }
+  /* The page's picture (frontmatter image:), top right with the text beside it;
+     a narrower column gets a smaller one, and a phone-wide one puts it above. */
+  article.md { container-type: inline-size; }
+  .md .page-image { float: right; width: 220px; margin: 4px 0 14px 22px; }
+  .md .page-image a { display: block; }
+  /* Never cropped: a tall picture is drawn narrower, centred in its column. */
+  .md .page-image img { display: block; width: auto; max-width: 100%; height: auto;
+    max-height: 320px; margin: 0 auto; border-radius: 8px; border: 1px solid var(--line); }
+  .md .page-image figcaption { margin-top: 7px; color: var(--muted); font-size: 12.5px;
+    line-height: 1.45; }
+  /* A heading beside the picture: its rule stops at the picture's edge. */
+  .md .page-image ~ :is(h2, h3) { display: flow-root; }
+  @container (max-width: 600px) {
+    .md .page-image { width: 168px; margin-left: 18px; }
+  }
+  @container (max-width: 470px) {
+    .md .page-image { float: none; width: auto; max-width: 320px; margin: 0 auto 16px; }
+    .md .page-image img { max-height: 280px; }
+    .md .page-image figcaption { text-align: center; }
+  }
   .md > :first-child { margin-top: 0; }
   /* Headings read like Wikipedia's: a section (##, or a second #) in the
      serif with a rule under it, a subsection (###) in bold, a size up from
