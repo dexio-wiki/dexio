@@ -1329,17 +1329,26 @@ def get_app(db_path: str | None = None) -> FastAPI:
             body = await request.json()
         except Exception:
             body = {}
-        name = str(body.get("name", "") if isinstance(body, dict) else "").strip()
+        body = body if isinstance(body, dict) else {}
+        name = str(body.get("name", "")).strip()
         ws = current_workspace(request, user)
         if ws.get("role") != "owner":
             raise HTTPException(403, "only an owner can name the workspace")
         if not form_user.allow(f"wsname:{user['id']}"):
             raise HTTPException(429, "too many tries. Wait a few minutes")
+        # How they heard about Dexio, asked on the same screen (signups.HEARD). The
+        # screen will not continue without it; a request without it is still taken,
+        # since a page opened before the question shipped has none to send.
+        try:
+            heard, heard_other = signups.check_heard(body.get("heard"), body.get("heard_other"))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
         try:
             db.rename_workspace(conn, ws["id"], name)
         except ValueError:
             raise HTTPException(400, "give the workspace a name") from None
         note_setup(user["id"], "named", "kept" if name == ws.get("name") else "changed", ws["id"])
+        signups.note_heard(conn, user["id"], heard, heard_other)
         return {"id": ws["handle"], "name": name[:80]}
 
     # ---- settings ------------------------------------------------------
@@ -2204,11 +2213,14 @@ def get_app(db_path: str | None = None) -> FastAPI:
         # made as "<first name>'s Workspace" (Forrest, 2026-09-28).
         full = db.workspace(conn, ws["id"]) or {}
         ask_name = ws.get("role") == "owner" and not full.get("named_at")
+        # and, on that screen, how they heard about Dexio, once per account
+        ask_heard = ask_name and signups.needs_heard(conn, user["id"])
         response = HTMLResponse(server_page(API, title="Dexio", workspaces=mine,
                                             current=ws["id"], clients=clients, account=account,
                                             first_page=pages.TRY_IT,
                                             connected=agent_connected(ws["id"]),
                                             empty=not pages_in, ask_name=ask_name,
+                                            ask_heard=ask_heard,
                                             shared=shares.shared_with(conn, user["id"]),
                                             can_share=True))
         _set_ws(response, ws["id"])

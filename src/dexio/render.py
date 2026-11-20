@@ -454,6 +454,12 @@ APP_JS = r"""
   const FIRST = window.DEXIO_FIRST_PAGE || "";
   const CONNECTED = !!window.DEXIO_CONNECTED;
   const ASK_NAME = !!window.DEXIO_ASK_NAME;
+  const ASK_HEARD = !!window.DEXIO_ASK_HEARD;
+  const HEARD = [["search", "Google or another search engine"],
+                 ["ai", "ChatGPT, Claude or another AI"], ["github", "GitHub"],
+                 ["list", "A list or directory"], ["reddit", "Reddit"],
+                 ["social", "X or LinkedIn"], ["friend", "A friend or colleague"],
+                 ["other", "Other"]];
   const workspaces = window.DEXIO_WORKSPACES || [];
   const ws = workspaces.find(w => w.id === window.DEXIO_WORKSPACE) || workspaces[0] || {name: ""};
   const wrap = document.getElementById("wrap");
@@ -501,12 +507,51 @@ APP_JS = r"""
       input.autocomplete = "organization"; input.value = ws.name || "";
       const go = el("button", "cta", "Continue");
       go.type = "submit";
-      row.append(input, go);
+      row.append(input);
       const msg = el("p", "ob-hint ob-error");
       msg.id = "ob-name-msg"; msg.hidden = true;
       msg.setAttribute("role", "alert");
       input.setAttribute("aria-describedby", msg.id);
+      // How they found Dexio (Forrest, 2026-11-19: "Do we ask how they found us during
+      // onboarding? If not, we should", then "Make it not optional and have nothing be
+      // selected at first"). One tap, no native dropdown: page-drawn choices in a radio
+      // group, none picked; Continue asks for one; Other needs a few words.
+      const heard = el("div", "ob-heard");
+      const hlab = el("p", "ob-label", "How did you hear about Dexio?");
+      hlab.id = "ob-heard-label";
+      const chips = el("div", "ob-chips");
+      chips.setAttribute("role", "radiogroup");
+      chips.setAttribute("aria-labelledby", hlab.id);
+      chips.setAttribute("aria-required", "true");
+      const hmsg = el("p", "ob-hint ob-error");
+      hmsg.id = "ob-heard-msg"; hmsg.hidden = true;
+      hmsg.setAttribute("role", "alert");
+      chips.setAttribute("aria-describedby", hmsg.id);
+      const other = el("input");
+      other.id = "ob-heard-other"; other.maxLength = 100; other.hidden = true;
+      other.placeholder = "Where? A site, a person, a post";
+      other.setAttribute("aria-label", "Where you heard about Dexio");
+      let pick = "";
+      for (const [id, text] of HEARD) {
+        const c = el("button", "ob-chip", text);
+        c.type = "button"; c.dataset.heard = id;
+        c.setAttribute("role", "radio"); c.setAttribute("aria-checked", "false");
+        c.onclick = () => {
+          pick = id;
+          for (const b of chips.children) b.setAttribute("aria-checked", String(b.dataset.heard === pick));
+          other.hidden = pick !== "other";
+          hmsg.hidden = true;
+          if (pick === "other") other.focus();
+        };
+        chips.append(c);
+      }
+      other.oninput = () => { hmsg.hidden = true; };
+      heard.append(hlab, chips, other, hmsg);
+      const act = el("div", "ob-actions");
+      act.append(go);
       f.append(lab, row, msg);
+      if (ASK_HEARD) f.append(heard);   // asked once per account (signups.needs_heard)
+      f.append(act);
       box.append(f);
       const fail = text => {
         msg.textContent = text; msg.hidden = false;
@@ -517,12 +562,16 @@ APP_JS = r"""
         e.preventDefault();
         const name = input.value.trim();
         if (!name) return fail("Give the workspace a name.");
+        const ask = (text, focus) => { hmsg.textContent = text; hmsg.hidden = false; focus.focus(); };
+        if (ASK_HEARD && !pick) return ask("Pick one to continue.", chips.firstChild);
+        if (ASK_HEARD && pick === "other" && !other.value.trim()) return ask("Say where, in a few words.", other);
         go.disabled = true;
         let r;
         try {
           r = await fetch(window.DEXIO_API + "/workspace/name?w=" + encodeURIComponent(ws.id), {
             method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({name})});
+            body: JSON.stringify({name, heard: pick,
+                                  heard_other: pick === "other" ? other.value.trim() : ""})});
         } catch (err) { r = null; }
         if (!r || !r.ok) return fail(await failure(r));
         renamed((await r.json()).name);
@@ -899,7 +948,7 @@ def server_page(api_base: str, title: str = "Dexio",
                 workspaces: list[dict] | None = None, current: int | None = None,
                 clients: list[dict] | None = None, account: dict | None = None,
                 empty: bool = False, first_page: str = "", connected: bool = False,
-                ask_name: bool = False, guest: dict | None = None,
+                ask_name: bool = False, ask_heard: bool = False, guest: dict | None = None,
                 shared: list[dict] | None = None, can_share: bool = False,
                 seo: dict | None = None, ssr: str = "") -> str:
     """The graph view of the current workspace's wiki.
@@ -924,7 +973,9 @@ def server_page(api_base: str, title: str = "Dexio",
     (no folders, layout picker or footer), so they do not show until the script
     puts up the flow.
     ask_name: the person is an owner of a workspace no one has named yet, so the
-    page opens on Name your workspace (in the onboarding state too)."""
+    page opens on Name your workspace (in the onboarding state too).
+    ask_heard: that screen also asks how they heard about Dexio, since their account
+    has no answer yet (signups.needs_heard)."""
     shell, js = _assets()
     workspaces = workspaces or []
     ws = next((w for w in workspaces if w["id"] == current), workspaces[0] if workspaces else None)
@@ -994,6 +1045,7 @@ def server_page(api_base: str, title: str = "Dexio",
                  f'window.DEXIO_FIRST_PAGE = {_safe_json("" if guest else first_page or "")};'
                  f'window.DEXIO_CONNECTED = {"true" if connected or guest else "false"};'
                  f'window.DEXIO_ASK_NAME = {"true" if ask_name and not guest else "false"};'
+                 f'window.DEXIO_ASK_HEARD = {"true" if ask_heard and ask_name and not guest else "false"};'
                  f'window.DEXIO_GUEST = {_safe_json(guest or None)};'
                  f'window.DEXIO_SHARE = {"true" if can_share and not guest else "false"};'
                  f'window.DEXIO_AI_STEPS = {_safe_json(ais.steps_head())};')

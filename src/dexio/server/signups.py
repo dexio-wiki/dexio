@@ -7,6 +7,12 @@ an outside Referer host, in a first-party cookie for 30 days, and the account
 creation writes it here with how the person signed up (password, google, github)
 and what brought them (the site, an agent's sign-in link, Claude or ChatGPT, an
 invite). No third-party analytics; the privacy policy discloses this.
+
+The first graph screen also asks an owner how they heard about Dexio, beside
+Name your workspace (Forrest, 2026-11-19: "Do we ask how they found us during
+onboarding? If not, we should"), because most accounts carry no referrer or tag:
+27 of 39 outside accounts that day. The answer is one of HEARD, plus a few words
+for Other, and the first answer is kept (note_heard).
 """
 from __future__ import annotations
 
@@ -21,17 +27,27 @@ from . import db
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS signups (
   user_id INTEGER PRIMARY KEY, at REAL NOT NULL, method TEXT NOT NULL, via TEXT NOT NULL,
-  referrer TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, landing TEXT
+  referrer TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, landing TEXT,
+  heard TEXT, heard_other TEXT
 );
 """
 COOKIE = "dexio_src"
 MAX_AGE = 30 * 86400
 FIELDS = ("ref", "utm_source", "utm_medium", "utm_campaign", "landing")
 _OWN = re.compile(r"(^|\.)dexio\.wiki$|^localhost$|^127\.0\.0\.1$|^testserver$")
+# How did you hear about Dexio? The keys are what is stored; the screen's labels are
+# render.py's HEARD, in the same order.
+HEARD = {"search": "Google or another search engine", "ai": "ChatGPT, Claude or another AI",
+         "github": "GitHub", "list": "A list or directory", "reddit": "Reddit",
+         "social": "X or LinkedIn", "friend": "A friend or colleague", "other": "Other"}
 
 
 def init(conn) -> None:
     conn.executescript(SCHEMA)
+    have = {r["name"] for r in conn.execute("PRAGMA table_info(signups)")}
+    for column in ("heard", "heard_other"):
+        if column not in have:
+            conn.execute(f"ALTER TABLE signups ADD COLUMN {column} TEXT")
     conn.commit()
 
 
@@ -109,5 +125,37 @@ def report(conn, days: int = 30) -> dict:
 
     return {"days": days, "signups": len(rows), "by_referrer": count("referrer"),
             "by_utm_source": count("utm_source"), "by_utm_campaign": count("utm_campaign"),
-            "by_via": count("via"),
+            "by_via": count("via"), "by_heard": count("heard"),
             "by_method": count("method")}
+
+
+def check_heard(heard, other) -> tuple[str, str]:
+    """The answer to How did you hear about Dexio?, cleaned: (key, words for Other).
+    ("", "") when there is none. ValueError for a key not in HEARD, or Other with no
+    words."""
+    heard = str(heard or "").strip()
+    if not heard:
+        return "", ""
+    if heard not in HEARD:
+        raise ValueError("pick one of the choices")
+    # Other's words may be in any language, so only control characters go
+    words = re.sub(r"[\x00-\x1f\x7f]", "", str(other or "")).strip()[:100] if heard == "other" else ""
+    if heard == "other" and not words:
+        raise ValueError("say where you heard about Dexio")
+    return heard, words
+
+
+def needs_heard(conn, user_id: int) -> bool:
+    """The account was recorded here and has not said how it heard about Dexio."""
+    row = conn.execute("SELECT heard FROM signups WHERE user_id=?", (user_id,)).fetchone()
+    return row is not None and not row["heard"]
+
+
+def note_heard(conn, user_id: int, heard: str, other: str = "") -> bool:
+    """Keep the account's answer, if it has none yet. False when nothing was written."""
+    if not heard:
+        return False
+    with db.LOCK, conn:
+        cur = conn.execute("UPDATE signups SET heard=?, heard_other=? WHERE user_id=?"
+                           " AND heard IS NULL", (heard, other or None, user_id))
+    return bool(cur.rowcount)

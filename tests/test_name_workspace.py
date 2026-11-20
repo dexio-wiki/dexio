@@ -118,3 +118,87 @@ def test_workspaces_from_before_the_question_are_not_asked(tmp_path):
     # and a workspace made after the upgrade is not
     ws = db.create_workspace(conn, "New", None)
     assert db.workspace(conn, ws_id(app, ws))["named_at"] is None
+
+
+# ---- How did you hear about Dexio? (Forrest, 2026-11-19) -----------------------------
+
+def asks_heard(page: str) -> bool:
+    return "window.DEXIO_ASK_HEARD = true;" in page
+
+
+def heard_of(app, email):
+    c = app.state.conn
+    uid = c.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()["id"]
+    row = c.execute("SELECT heard, heard_other FROM signups WHERE user_id=?", (uid,)).fetchone()
+    return (row["heard"], row["heard_other"])
+
+
+def test_the_name_screen_asks_how_they_heard_and_keeps_the_answer(app):
+    ann = browser(app)
+    signup(ann, "ann@example.com", first="Ann")
+    ws = current(ann)
+    assert asks_heard(ann.get(f"/w/{ws}").text)
+    r = ann.post(f"/api/v1/workspace/name?w={ws}", json={"name": "Acme", "heard": "ai"})
+    assert r.status_code == 200
+    assert heard_of(app, "ann@example.com") == ("ai", None)
+    # asked once per account: a blank workspace from the menu asks for a name, not this
+    ann.post("/settings/workspaces", data={"name": ""})
+    blank = ann.get("/api/v1/workspaces").json()["workspaces"][-1]["id"]
+    page = ann.get(f"/w/{blank}").text
+    assert asks(page) and not asks_heard(page)
+    # and a second answer does not replace the first
+    ann.post(f"/api/v1/workspace/name?w={blank}", json={"name": "Side", "heard": "reddit"})
+    assert heard_of(app, "ann@example.com") == ("ai", None)
+    from dexio.server import signups
+    assert signups.report(app.state.conn)["by_heard"] == {"ai": 1}
+
+
+def test_other_needs_words_and_unknown_choices_are_refused(app):
+    ann = browser(app)
+    signup(ann, "ann@example.com")
+    ws = current(ann)
+    for body in ({"name": "Acme", "heard": "tv"}, {"name": "Acme", "heard": "other"},
+                 {"name": "Acme", "heard": "other", "heard_other": "   "}):
+        assert ann.post(f"/api/v1/workspace/name?w={ws}", json=body).status_code == 400
+    assert asks(ann.get(f"/w/{ws}").text)                     # nothing half-applied
+    r = ann.post(f"/api/v1/workspace/name?w={ws}",
+                 json={"name": "Acme", "heard": "other", "heard_other": " 播客\x07 " + "x" * 200})
+    assert r.status_code == 200
+    heard, words = heard_of(app, "ann@example.com")
+    assert heard == "other" and words.startswith("播客 x") and len(words) == 100
+    # words sent with any other choice are not kept
+    bob = browser(app)
+    signup(bob, "bob@example.com")
+    bob.post(f"/api/v1/workspace/name?w={current(bob)}",
+             json={"name": "B", "heard": "friend", "heard_other": "Sam"})
+    assert heard_of(app, "bob@example.com") == ("friend", None)
+
+
+def test_a_page_from_before_the_question_still_names_the_workspace(app):
+    ann = browser(app)
+    signup(ann, "ann@example.com")
+    ws = current(ann)
+    assert ann.post(f"/api/v1/workspace/name?w={ws}", json={"name": "Acme"}).status_code == 200
+    assert heard_of(app, "ann@example.com") == (None, None)
+    assert not asks(ann.get(f"/w/{ws}").text)
+
+
+def test_the_labels_on_the_screen_match_what_is_stored():
+    import re
+    from dexio import render
+    from dexio.server import signups
+    block = render.APP_JS[render.APP_JS.index("const HEARD = ["):]
+    block = block[:block.index("]];") + 3]
+    pairs = re.findall(r'\["(\w+)", "([^"]+)"\]', block)
+    assert dict(pairs) == signups.HEARD and [k for k, _ in pairs] == list(signups.HEARD)
+
+
+def test_a_signups_table_from_before_gets_the_columns(app):
+    from dexio.server import signups
+    c = app.state.conn
+    c.execute("ALTER TABLE signups DROP COLUMN heard")
+    c.execute("ALTER TABLE signups DROP COLUMN heard_other")
+    c.commit()
+    signups.init(c)
+    have = {r["name"] for r in c.execute("PRAGMA table_info(signups)")}
+    assert {"heard", "heard_other"} <= have

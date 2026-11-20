@@ -334,6 +334,25 @@ __THEME_HEAD__
     outline: 2px solid var(--accent); outline-offset: 2px; border-color: transparent; box-shadow: none;
   }
   #onboard .cta:disabled { opacity: .5; cursor: default; pointer-events: none; }
+  /* Name your workspace's "How did you hear about Dexio?": page-drawn choices, no native
+     dropdown (standing rule, 2026-09-28) */
+  #onboard .ob-heard { margin-top: 20px; }
+  #onboard p.ob-label { margin: 0 0 8px; }
+  #onboard .ob-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  #onboard .ob-chip {
+    min-height: 34px; padding: 0 13px; font: inherit; font-size: 13.5px; color: var(--text);
+    background: var(--panel); border: 1px solid var(--line-strong); border-radius: 999px;
+    cursor: pointer; transition: background-color .12s ease, border-color .12s ease;
+  }
+  #onboard .ob-chip:hover { background: var(--sunken); }
+  #onboard .ob-chip[aria-checked="true"] {
+    border-color: var(--accent); color: var(--accent); font-weight: 600;
+    background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  }
+  #onboard .ob-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #onboard #ob-heard-other { display: block; width: 100%; box-sizing: border-box; margin-top: 10px; }
+  #onboard #ob-heard-other[hidden] { display: none; }
+  #onboard .ob-actions { margin-top: 22px; }
   #onboard .ob-hint { margin: 8px 0 0; color: var(--muted); font-size: 12.5px; }
   #onboard .ob-error { color: var(--bad-text); }
   #onboard a:not(.cta) { color: var(--accent); }
